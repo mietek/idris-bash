@@ -10,6 +10,7 @@ stability:          experimental
 homepage:           https://github.com/mietek/idris-bash
 license-file:       LICENSE.md
 extra-source-files: README.md
+data-files:         prelude.sh
 synopsis:           GNU bash backend for Idris
 
 executable idris-bash

@@ -6,99 +6,14 @@ import IRTS.Lang
 import IRTS.Simplified
 import Idris.Core.TT
 
-lit :: [String] -> String
-lit ls = showSep (cr 1) ls
-
-bash_writeStr :: String
-bash_writeStr = lit
-    [ "idris_writeStr () {"
-    ,   "echo \"$2\""
-    ,   "eval \"$1=\""
-    ]
-
-bash_readStr :: String
-bash_readStr = lit
-    [ "idris_readStr () {"
-    ,   "read -r \"$1\""
-    ]
-
-bash_error :: String
-bash_error = lit
-    [ "idris_error () {"
-    ,   "echo \"$@\" >&2"
-    ,   "exit 1"
-    ]
-
-arrayCounter :: String
-arrayCounter = "_ARRCTR"
-
-arrayPrefix :: String
-arrayPrefix = "_ARR"
-
-bash_makeArray :: String
-bash_makeArray = lit
-    [ "idris_makeArray () {"
-    ,   "eval \"" ++ arrayPrefix ++ "${" ++ arrayCounter ++ "}=( \"\\$@\" )\""
-    ,   ret ++ "=" ++ arrayPrefix ++ "${" ++ arrayCounter ++ "}"
-    ,   "echo \"" ++ arrayPrefix ++ "${" ++ arrayCounter ++ "}=( $* )\""
-    ,   arrayCounter ++ "=$(( " ++ arrayCounter ++ " + 1 ))"
-    ]
-
-bash_indexArray :: String
-bash_indexArray = lit
-    [ "idris_indexArray () {"
-    ,    "local arr=\"$1[$2]\""
-    ,    ret ++ "=${!arr}"
-    ]
-
-frameCounter :: String
-frameCounter = "_FRMCTR"
-
-framePrefix :: String
-framePrefix = "_FRM"
-
-thisFrame :: String
-thisFrame = "_THSFRM"
-
-bash_pushFrame :: String
-bash_pushFrame = lit
-    [ "idris_pushFrame () {"
-    -- ,   "echo \"push ${" ++ frameCounter ++ "} = ${" ++ thisFrame ++ "[*]:-}\""
-    ,   "eval \"" ++ framePrefix ++ "${" ++ frameCounter ++ "}=( \"\\${" ++ thisFrame ++ "[@]}\" )\""
-    ,   frameCounter ++ "=$(( " ++ frameCounter ++ " + 1 ))"
-    ,   thisFrame ++ "=( \"$@\" )"
-    -- ,   "echo \"     ${" ++ frameCounter ++ "} = ${" ++ thisFrame ++ "[*]:-}\""
-    ]
-
-bash_popFrame :: String
-bash_popFrame = lit
-    [ "idris_popFrame () {"
-    -- ,   "echo \"pop  ${" ++ frameCounter ++ "} = ${" ++ thisFrame ++ "[*]:-}\""
-    ,   frameCounter ++ "=$(( " ++ frameCounter ++ " - 1 ))"
-    ,   "eval \"" ++ thisFrame ++ "=( \"\\${" ++ framePrefix ++ "${" ++ frameCounter ++ "}[@]}\" )\""
-    -- ,   "echo \"     ${" ++ frameCounter ++ "} = ${" ++ thisFrame ++ "[*]:-}\""
-    ]
-
-lits :: String
-lits = showSep "\n}\n\n\n"
-    [ bash_writeStr
-    , bash_readStr
-    , bash_error
-    , bash_makeArray
-    , bash_indexArray
-    , bash_pushFrame
-    , bash_popFrame
-    ]
+import Paths_idris_bash
 
 codegenBash :: CodeGenerator
 codegenBash ci = do
+    preludeName <- getDataFileName "prelude.sh"
+    prelude <- readFile preludeName
     writeFile (outputFile ci) $
-      "#!/usr/bin/env bash\n\n\n" ++
-      "set -eu\n\n\n" ++
-      arrayCounter ++ "=0\n" ++
-      frameCounter ++ "=0\n" ++
-      thisFrame ++ "=( bottom )\n\n\n" ++
-      lits ++ "\n}\n\n\n" ++
+      prelude ++ "\n\n" ++
       concatMap doCodegen (simpleDecls ci) ++
       name (sMN 0 "runMain") ++ "\n"
 
@@ -123,7 +38,7 @@ dRet :: String
 dRet = "${" ++ ret ++ "}"
 
 loc :: Int -> String
-loc i = thisFrame ++ "[" ++ show i ++ "]"
+loc i = "_THSFRM[" ++ show i ++ "]"
 
 var :: LVar -> String
 var (Loc i)  = loc i
