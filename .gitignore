@@ -1,0 +1,5 @@
+.cabal-sandbox
+cabal.sandbox.config
+dist
+pythag.ibc
+pythag.sh
