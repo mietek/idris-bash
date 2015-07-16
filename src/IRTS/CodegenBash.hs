@@ -57,7 +57,7 @@ cgConst (Ch c)            = "'" ++ [c] ++ "'"
 cgConst (Str s)           = "'" ++ s ++ "'"
 cgConst TheWorld          = "0"
 cgConst x | isTypeConst x = "0"
-          | otherwise     = error $ "Constant " ++ show x ++ " is not supported by the bash backend"
+          | otherwise     = error $ "Constant " ++ show x ++ " is not supported"
 
 cgFun :: Name -> [Name] -> SExp -> String
 cgFun n _args def =
@@ -85,7 +85,7 @@ cgFunBody _ r (SConst c)           = r ++ "=" ++ cgConst c
 cgFunBody _ r (SOp op args)        = cgOp r op args
 cgFunBody _ r SNothing             = r ++ "=0"
 -- cgFunBody l r (SError x)
-cgFunBody _ _ x                    = error $ "Expression " ++ show x ++ " is not supported by the bash backend"
+cgFunBody _ _ x                    = error $ "Expression " ++ show x ++ " is not supported"
 
 retCall :: Int -> String -> String
 retCall l r = if r == ret then "" else cr l ++ r ++ "=" ++ dRet
@@ -180,5 +180,5 @@ cgOp r LWriteStr          [_, x] = "idris_writeStr " ++ r ++ " " ++ qVar x
 -- cgOp r LPar
 -- cgOp r LExternal _
 -- cgOp r LNoOp
--- cgOp _ op _                      = error $ "Operator " ++ show op ++ " is not supported by the bash backend"
-cgOp _ op _                      = "idris_error 'Operator " ++ show op ++ " is not supported by the bash backend'"
+-- cgOp _ op _                      = error $ "Operator " ++ show op ++ " is not supported"
+cgOp _ op _                      = "idris_error 'Operator " ++ show op ++ " is not supported'"
