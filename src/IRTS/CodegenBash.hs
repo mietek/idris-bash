@@ -29,26 +29,54 @@ bash_error = lit
     ,   "exit 1"
     ]
 
-bash_switch :: String
-bash_switch = lit
-    [ "idris_switch () {"
-    ,   "local arr"
-    ,   "arr=\"${!2}[$3]\""
-    -- ,   "echo -e \"${FUNCNAME[1]}\\n\\t${!arr} <- ${arr}\""
-    ,   "eval \"$1=\\${!arr}\""
+arrayCounter :: String
+arrayCounter = "_ARRCTR"
+
+arrayPrefix :: String
+arrayPrefix = "_ARR"
+
+bash_makeArray :: String
+bash_makeArray = lit
+    [ "idris_makeArray () {"
+    ,   "eval \"" ++ arrayPrefix ++ "${" ++ arrayCounter ++ "}=( \"\\$@\" )\""
+    ,   ret ++ "=" ++ arrayPrefix ++ "${" ++ arrayCounter ++ "}"
+    ,   "echo \"" ++ arrayPrefix ++ "${" ++ arrayCounter ++ "}=( $* )\""
+    ,   arrayCounter ++ "=$(( " ++ arrayCounter ++ " + 1 ))"
     ]
 
-bash_array :: String
-bash_array = lit
-    [ "idris_array () {"
-    ,   "local arr"
-    ,   "arr=${" ++ arrNext ++ "}"
-    ,   arrCtr ++ "=$(( " ++ arrCtr ++ " + 1 ))"
-    ,   arrNext ++ "=" ++ arr ++ "${" ++ arrCtr ++ "}"
-    -- ,   "echo -e \"${FUNCNAME[1]}\\n\\t${arr}=( ${*:2} )\""
-    ,   "echo -e \"${arr}=( ${*:2} )\""
-    ,   "eval \"${arr}=( \"\\${@:2}\" )\""
-    ,   "eval \"$1=\\${arr}\""
+bash_indexArray :: String
+bash_indexArray = lit
+    [ "idris_indexArray () {"
+    ,    "local arr=\"$1[$2]\""
+    ,    ret ++ "=${!arr}"
+    ]
+
+frameCounter :: String
+frameCounter = "_FRMCTR"
+
+framePrefix :: String
+framePrefix = "_FRM"
+
+thisFrame :: String
+thisFrame = "_THSFRM"
+
+bash_pushFrame :: String
+bash_pushFrame = lit
+    [ "idris_pushFrame () {"
+    -- ,   "echo \"push ${" ++ frameCounter ++ "} = ${" ++ thisFrame ++ "[*]:-}\""
+    ,   "eval \"" ++ framePrefix ++ "${" ++ frameCounter ++ "}=( \"\\${" ++ thisFrame ++ "[@]}\" )\""
+    ,   frameCounter ++ "=$(( " ++ frameCounter ++ " + 1 ))"
+    ,   thisFrame ++ "=( \"$@\" )"
+    -- ,   "echo \"     ${" ++ frameCounter ++ "} = ${" ++ thisFrame ++ "[*]:-}\""
+    ]
+
+bash_popFrame :: String
+bash_popFrame = lit
+    [ "idris_popFrame () {"
+    -- ,   "echo \"pop  ${" ++ frameCounter ++ "} = ${" ++ thisFrame ++ "[*]:-}\""
+    ,   frameCounter ++ "=$(( " ++ frameCounter ++ " - 1 ))"
+    ,   "eval \"" ++ thisFrame ++ "=( \"\\${" ++ framePrefix ++ "${" ++ frameCounter ++ "}[@]}\" )\""
+    -- ,   "echo \"     ${" ++ frameCounter ++ "} = ${" ++ thisFrame ++ "[*]:-}\""
     ]
 
 lits :: String
@@ -56,8 +84,10 @@ lits = showSep "\n}\n\n\n"
     [ bash_writeStr
     , bash_readStr
     , bash_error
-    , bash_switch
-    , bash_array
+    , bash_makeArray
+    , bash_indexArray
+    , bash_pushFrame
+    , bash_popFrame
     ]
 
 codegenBash :: CodeGenerator
@@ -65,8 +95,9 @@ codegenBash ci = do
     writeFile (outputFile ci) $
       "#!/usr/bin/env bash\n\n\n" ++
       "set -eu\n\n\n" ++
-      arrCtr ++ "=0\n" ++
-      arrNext ++ "=" ++ arr ++ "0\n\n\n" ++
+      arrayCounter ++ "=0\n" ++
+      frameCounter ++ "=0\n" ++
+      thisFrame ++ "=( bottom )\n\n\n" ++
       lits ++ "\n}\n\n\n" ++
       concatMap doCodegen (simpleDecls ci) ++
       name (sMN 0 "runMain") ++ "\n"
@@ -85,39 +116,24 @@ name n =
 cr :: Int -> String
 cr l = "\n" ++ replicate l '\t'
 
-arr :: String
-arr = "_ARR"
-
-arrCtr :: String
-arrCtr = arr ++ "_CTR"
-
-arrNext :: String
-arrNext = arr ++ "_NEXT"
-
 ret :: String
-ret = "_RET"
+ret = "_R"
 
 dRet :: String
 dRet = "${" ++ ret ++ "}"
 
-loc :: String -> Int -> String
-loc fn i = fn ++ "_loc" ++ show i ++ "[${#FUNCNAME[@]}]"
+loc :: Int -> String
+loc i = thisFrame ++ "[" ++ show i ++ "]"
 
-var :: String -> LVar -> String
-var fn (Loc i)  = loc fn i
-var _  (Glob n) = name n
+var :: LVar -> String
+var (Loc i)  = loc i
+var (Glob n) = name n
 
-dVar :: String -> LVar -> String
-dVar fn x = "${" ++ var fn x ++ "}"
+dVar :: LVar -> String
+dVar x = "${" ++ var x ++ "}"
 
-qVar :: String -> LVar -> String
-qVar fn x = "\"" ++ dVar fn x ++ "\""
-
-csv :: String
-csv = "_CASE"
-
-dCsv :: String
-dCsv = "${" ++ csv ++ "}"
+qVar :: LVar -> String
+qVar x = "\"" ++ dVar x ++ "\""
 
 cgConst :: Const -> String
 cgConst (I i)             = show i
@@ -129,36 +145,32 @@ cgConst x | isTypeConst x = "0"
           | otherwise     = error $ "Constant " ++ show x ++ " is not supported by the bash backend"
 
 cgFun :: Name -> [Name] -> SExp -> String
-cgFun n args def =
-    fn ++ " () {" ++ cr 1 ++
-    cgFunArgs fn args ++ cr 1 ++
-    cgFunBody fn 1 ret def ++ "\n}\n\n\n"
-  where
-    fn :: String
-    fn = name n
+cgFun n _args def =
+    name n ++ " () {" ++ cr 1 ++
+    cgFunBody 1 ret def ++ "\n}\n\n\n"
 
-cgFunArgs :: String -> [Name] -> String
-cgFunArgs _  []   = ""
-cgFunArgs fn args = showSep (cr 1) (map bind nums) ++ cr 1
-  where
-    nums   = [0..length args - 1]
-    bind i = loc fn i ++ "=$" ++ show (i + 1)
-
-cgFunBody :: String -> Int -> String -> SExp -> String
-cgFunBody _  l r (SV (Glob fun))      = name fun ++ retCall l r
-cgFunBody fn _ r (SV (Loc i))         = r ++ "=" ++ dVar fn (Loc i)
-cgFunBody fn l r (SApp _ fun vars)    = name fun ++ " " ++ showSep " " (map (qVar fn) vars) ++ retCall l r
-cgFunBody fn l r (SLet (Loc i) e1 e2) = cgFunBody fn l (loc fn i) e1 ++ cr l ++ cgFunBody fn l r e2
--- cgFunBody fn l r (SUpdate _ e)
--- cgFunBody fn l r (SProj v i)
-cgFunBody fn _ r (SCon _ t _ vars)    = "idris_array " ++ r ++ " " ++ showSep " " (show t : map (qVar fn) vars)
-cgFunBody fn l r (SCase _ v alts)     = cgCase fn l r v alts
-cgFunBody fn l r (SChkCase v alts)    = cgCase fn l r v alts
-cgFunBody _  _ r (SConst c)           = r ++ "=" ++ cgConst c
-cgFunBody fn _ r (SOp op args)        = cgOp fn r op args
-cgFunBody _  _ r SNothing             = r ++ "=0"
--- cgFunBody fn l r (SError x)
-cgFunBody _  _ _ x                    = error $ "Expression " ++ show x ++ " is not supported by the bash backend"
+cgFunBody :: Int -> String -> SExp -> String
+cgFunBody l r (SV (Glob fun))      = "idris_pushFrame" ++ cr l ++
+                                     name fun ++ cr l ++
+                                     "idris_popFrame" ++
+                                     retCall l r
+cgFunBody _ r (SV (Loc i))         = r ++ "=" ++ dVar (Loc i)
+cgFunBody l r (SApp _ fun vars)    = "idris_pushFrame " ++ showSep " " (map qVar vars) ++ cr l ++
+                                     name fun ++ cr l ++
+                                     "idris_popFrame" ++
+                                     retCall l r
+cgFunBody l r (SLet (Loc i) e1 e2) = cgFunBody l (loc i) e1 ++ cr l ++ cgFunBody l r e2
+-- cgFunBody l r (SUpdate _ e)
+-- cgFunBody l r (SProj v i)
+cgFunBody l r (SCon _ t _ vars)    = "idris_makeArray " ++ showSep " " (show t : map qVar vars) ++
+                                     retCall l r
+cgFunBody l r (SCase _ v alts)     = cgCase l r v alts
+cgFunBody l r (SChkCase v alts)    = cgCase l r v alts
+cgFunBody _ r (SConst c)           = r ++ "=" ++ cgConst c
+cgFunBody _ r (SOp op args)        = cgOp r op args
+cgFunBody _ r SNothing             = r ++ "=0"
+-- cgFunBody l r (SError x)
+cgFunBody _ _ x                    = error $ "Expression " ++ show x ++ " is not supported by the bash backend"
 
 retCall :: Int -> String -> String
 retCall l r = if r == ret then "" else cr l ++ r ++ "=" ++ dRet
@@ -167,90 +179,91 @@ conCase :: SAlt -> Bool
 conCase (SConCase _ _ _ _ _) = True
 conCase _                    = False
 
-cgCase :: String -> Int -> String -> LVar -> [SAlt] -> String
-cgCase fn l r v alts = (if hasConCase
-                         then "idris_switch " ++ csv ++ " " ++ var fn v ++ " 0" ++ cr l
+cgCase :: Int -> String -> LVar -> [SAlt] -> String
+cgCase l r v alts = (if hasConCase
+                         then "idris_indexArray " ++ qVar v ++ " 0" ++ cr l
                          else "") ++
-                       "case " ++ (if hasConCase then dCsv else dVar fn v) ++ " in" ++ cr l ++
-                       showSep (cr (l + 1) ++ ";;" ++ cr l) (map (cgAlt fn l r v) alts) ++ cr l ++
+                       "case " ++ (if hasConCase then dRet else dVar v) ++ " in" ++ cr l ++
+                       showSep (cr (l + 1) ++ ";;" ++ cr l) (map (cgAlt l r v) alts) ++ cr l ++
                        "esac"
   where
     hasConCase :: Bool
     hasConCase = any conCase alts
 
-cgAlt :: String -> Int -> String -> LVar -> SAlt -> String
-cgAlt fn l r _ (SDefaultCase e)        = "*)" ++ cr (l + 1) ++ cgFunBody fn (l + 1) r e
-cgAlt fn l r _ (SConstCase t e)        = show t ++ ")" ++ cr (l + 1) ++ cgFunBody fn (l + 1) r e
-cgAlt fn l r v (SConCase i0 t _ ns0 e) = show t ++ ")" ++ cr (l + 1) ++ project 1 i0 ns0 ++ cgFunBody fn (l + 1) r e
+cgAlt :: Int -> String -> LVar -> SAlt -> String
+cgAlt l r _ (SDefaultCase e)        = "*)" ++ cr (l + 1) ++ cgFunBody (l + 1) r e
+cgAlt l r _ (SConstCase t e)        = show t ++ ")" ++ cr (l + 1) ++ cgFunBody (l + 1) r e
+cgAlt l r v (SConCase i0 t _ ns0 e) = show t ++ ")" ++ cr (l + 1) ++ project 1 i0 ns0 ++ cgFunBody (l + 1) r e
   where
     project :: Int -> Int -> [Name] -> String
     project _ _ []       = ""
-    project k i (_ : ns) = "idris_switch " ++ loc fn i ++ " " ++ var fn v ++ " " ++ show k ++ cr (l + 1) ++
+    project k i (_ : ns) = "idris_indexArray " ++ qVar v ++ " " ++ show k ++ cr (l + 1) ++
+                           loc i ++ "=" ++ dRet ++ cr (l + 1) ++
                            project (k + 1) (i + 1) ns
 
-cgOp :: String -> String -> PrimFn -> [LVar] -> String
-cgOp fn r (LPlus  (ATInt _)) [x, y] = r ++ "=$(( " ++ var fn x ++ " + "  ++ var fn y ++ " ))"
-cgOp fn r (LMinus (ATInt _)) [x, y] = r ++ "=$(( " ++ var fn x ++ " - "  ++ var fn y ++ " ))"
-cgOp fn r (LTimes (ATInt _)) [x, y] = r ++ "=$(( " ++ var fn x ++ " * "  ++ var fn y ++ " ))"
--- cgOp fn r LUDiv _
--- cgOp fn r LSDiv _
--- cgOp fn r LURem _
--- cgOp fn r LSRem _
--- cgOp fn r LAnd _
--- cgOp fn r LOr _
--- cgOp fn r LXOr _
--- cgOp fn r LCompl _
--- cgOp fn r LSHL _
--- cgOp fn r LLSHR _
--- cgOp fn r LASHR _
-cgOp fn r (LEq    (ATInt _)) [x, y] = r ++ "=$(( " ++ var fn x ++ " == " ++ var fn y ++ " ))"
--- cgOp fn r LLt _
--- cgOp fn r LLe _
--- cgOp fn r LGt _
--- cgOp fn r LGe _
-cgOp fn r (LSLt   (ATInt _)) [x, y] = r ++ "=$(( " ++ var fn x ++ " < "  ++ var fn y ++ " ))"
-cgOp fn r (LSLe   (ATInt _)) [x, y] = r ++ "=$(( " ++ var fn x ++ " <= " ++ var fn y ++ " ))"
-cgOp fn r (LSGt   (ATInt _)) [x, y] = r ++ "=$(( " ++ var fn x ++ " > "  ++ var fn y ++ " ))"
-cgOp fn r (LSGe   (ATInt _)) [x, y] = r ++ "=$(( " ++ var fn x ++ " >= " ++ var fn y ++ " ))"
-cgOp fn r (LSExt _ _)        [x]    = r ++ "=" ++ dVar fn x
--- cgOp fn r LZExt _ _
-cgOp fn r (LTrunc _ _)       [x]    = r ++ "=" ++ dVar fn x
-cgOp fn r LStrConcat         [x, y] = r ++ "=" ++ dVar fn x ++ dVar fn y
-cgOp fn r LStrLt             [x, y] = r ++ "=[[ " ++ dVar fn x ++ " < " ++ qVar fn y ++ " ]]"
-cgOp fn r LStrEq             [x, y] = r ++ "=[[ " ++ dVar fn x ++ " = " ++ qVar fn y ++ " ]]"
-cgOp fn r LStrLen            [x]    = r ++ "=${#" ++ var fn x ++ "}"
--- cgOp fn r LIntFloat _
--- cgOp fn r LFloatInt _
-cgOp fn r (LIntStr _)        [x]    = r ++ "=" ++ dVar fn x
--- cgOp fn r LStrInt _
--- cgOp fn r LFloatStr
--- cgOp fn r LStrFloat
-cgOp fn r (LChInt _)         [x]    = r ++ "=" ++ dVar fn x
-cgOp fn r (LIntCh _)         [x]    = r ++ "=" ++ dVar fn x
--- cgOp fn r LBitCast _ _
--- cgOp fn r LFExp
--- cgOp fn r LFLog
--- cgOp fn r LFSin
--- cgOp fn r LFCos
--- cgOp fn r LFTan
--- cgOp fn r LFASin
--- cgOp fn r LFACos
--- cgOp fn r LFATan
--- cgOp fn r LFSqrt
--- cgOp fn r LFFloor
--- cgOp fn r LFCeil
--- cgOp fn r LFNegate
-cgOp fn r LStrHead           [x]    = r ++ "=" ++ "${" ++ var fn x ++ ":0:1}"
-cgOp fn r LStrTail           [x]    = r ++ "=" ++ "${" ++ var fn x ++ ":1}"
-cgOp fn r LStrCons           [x, y] = r ++ "=" ++ dVar fn x ++ dVar fn y
-cgOp fn r LStrIndex          [x, y] = r ++ "=" ++ "${" ++ var fn x ++ ":" ++ dVar fn y ++ ":1}"
--- cgOp fn r LStrRev
-cgOp _  r LReadStr           [_]    = "idris_readStr \"${" ++ r ++ "}\""
-cgOp fn r LWriteStr          [_, x] = "idris_writeStr " ++ r ++ " " ++ qVar fn x
--- cgOp fn r LSystemInfo
--- cgOp fn r LFork
--- cgOp fn r LPar
--- cgOp fn r LExternal _
--- cgOp fn r LNoOp
--- cgOp _  _ op _                      = error $ "Operator " ++ show op ++ " is not supported by the bash backend"
-cgOp _  _ op _                      = "idris_error 'Operator " ++ show op ++ " is not supported by the bash backend'"
+cgOp :: String -> PrimFn -> [LVar] -> String
+cgOp r (LPlus  (ATInt _)) [x, y] = r ++ "=$(( " ++ var x ++ " + "  ++ var y ++ " ))"
+cgOp r (LMinus (ATInt _)) [x, y] = r ++ "=$(( " ++ var x ++ " - "  ++ var y ++ " ))"
+cgOp r (LTimes (ATInt _)) [x, y] = r ++ "=$(( " ++ var x ++ " * "  ++ var y ++ " ))"
+-- cgOp r LUDiv _
+-- cgOp r LSDiv _
+-- cgOp r LURem _
+-- cgOp r LSRem _
+-- cgOp r LAnd _
+-- cgOp r LOr _
+-- cgOp r LXOr _
+-- cgOp r LCompl _
+-- cgOp r LSHL _
+-- cgOp r LLSHR _
+-- cgOp r LASHR _
+cgOp r (LEq    (ATInt _)) [x, y] = r ++ "=$(( " ++ var x ++ " == " ++ var y ++ " ))"
+-- cgOp r LLt _
+-- cgOp r LLe _
+-- cgOp r LGt _
+-- cgOp r LGe _
+cgOp r (LSLt   (ATInt _)) [x, y] = r ++ "=$(( " ++ var x ++ " < "  ++ var y ++ " ))"
+cgOp r (LSLe   (ATInt _)) [x, y] = r ++ "=$(( " ++ var x ++ " <= " ++ var y ++ " ))"
+cgOp r (LSGt   (ATInt _)) [x, y] = r ++ "=$(( " ++ var x ++ " > "  ++ var y ++ " ))"
+cgOp r (LSGe   (ATInt _)) [x, y] = r ++ "=$(( " ++ var x ++ " >= " ++ var y ++ " ))"
+cgOp r (LSExt _ _)        [x]    = r ++ "=" ++ dVar x
+-- cgOp r LZExt _ _
+cgOp r (LTrunc _ _)       [x]    = r ++ "=" ++ dVar x
+cgOp r LStrConcat         [x, y] = r ++ "=" ++ dVar x ++ dVar y
+cgOp r LStrLt             [x, y] = r ++ "=[[ " ++ dVar x ++ " < " ++ qVar y ++ " ]]"
+cgOp r LStrEq             [x, y] = r ++ "=[[ " ++ dVar x ++ " = " ++ qVar y ++ " ]]"
+cgOp r LStrLen            [x]    = r ++ "=${#" ++ var x ++ "}"
+-- cgOp r LIntFloat _
+-- cgOp r LFloatInt _
+cgOp r (LIntStr _)        [x]    = r ++ "=" ++ dVar x
+-- cgOp r LStrInt _
+-- cgOp r LFloatStr
+-- cgOp r LStrFloat
+cgOp r (LChInt _)         [x]    = r ++ "=" ++ dVar x
+cgOp r (LIntCh _)         [x]    = r ++ "=" ++ dVar x
+-- cgOp r LBitCast _ _
+-- cgOp r LFExp
+-- cgOp r LFLog
+-- cgOp r LFSin
+-- cgOp r LFCos
+-- cgOp r LFTan
+-- cgOp r LFASin
+-- cgOp r LFACos
+-- cgOp r LFATan
+-- cgOp r LFSqrt
+-- cgOp r LFFloor
+-- cgOp r LFCeil
+-- cgOp r LFNegate
+cgOp r LStrHead           [x]    = r ++ "=" ++ "${" ++ var x ++ ":0:1}"
+cgOp r LStrTail           [x]    = r ++ "=" ++ "${" ++ var x ++ ":1}"
+cgOp r LStrCons           [x, y] = r ++ "=" ++ dVar x ++ dVar y
+cgOp r LStrIndex          [x, y] = r ++ "=" ++ "${" ++ var x ++ ":" ++ dVar y ++ ":1}"
+-- cgOp r LStrRev
+cgOp r LReadStr           [_]    = "idris_readStr \"${" ++ r ++ "}\""
+cgOp r LWriteStr          [_, x] = "idris_writeStr " ++ r ++ " " ++ qVar x
+-- cgOp r LSystemInfo
+-- cgOp r LFork
+-- cgOp r LPar
+-- cgOp r LExternal _
+-- cgOp r LNoOp
+-- cgOp _ op _                      = error $ "Operator " ++ show op ++ " is not supported by the bash backend"
+cgOp _ op _                      = "idris_error 'Operator " ++ show op ++ " is not supported by the bash backend'"
