@@ -4,6 +4,9 @@
 set -eu
 
 
+_R=
+
+
 _ARRCTR=0
 _FRMCTR=0
 _THSFRM=( bottom )

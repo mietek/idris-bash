@@ -23,22 +23,22 @@ doCodegen (n, SFun _ args _i def) =
 
 name :: Name -> String
 name n =
-    "idris_" ++ concatMap bashChar (showCG n)
+    "idris_" ++ concatMap char (showCG n)
   where
-    bashChar x | isAlpha x || isDigit x = [x]
-               | otherwise              = "_" ++ show (fromEnum x) ++ "_"
+    char x | isAlpha x || isDigit x = [x]
+           | otherwise              = "_" ++ show (fromEnum x) ++ "_"
 
 cr :: Int -> String
 cr l = "\n" ++ replicate l '\t'
+
+loc :: Int -> String
+loc i = "_THSFRM[" ++ show i ++ "]"
 
 ret :: String
 ret = "_R"
 
 dRet :: String
 dRet = "${" ++ ret ++ "}"
-
-loc :: Int -> String
-loc i = "_THSFRM[" ++ show i ++ "]"
 
 var :: LVar -> String
 var (Loc i)  = loc i
@@ -50,112 +50,117 @@ dVar x = "${" ++ var x ++ "}"
 qVar :: LVar -> String
 qVar x = "\"" ++ dVar x ++ "\""
 
+cgFun :: Name -> [Name] -> SExp -> String
+cgFun n _args def =
+    name n ++ " () {" ++ cr 1 ++
+    cgBody 1 ret def ++ "\n}\n\n\n"
+
+cgBody :: Int -> String -> SExp -> String
+cgBody l r (SV (Glob f))        = "idris_pushFrame" ++ cr l ++
+                                  name f ++ cr l ++
+                                  "idris_popFrame" ++
+                                  cgRet l r
+cgBody _ r (SV (Loc i))         = r ++ "=" ++ dVar (Loc i)
+cgBody l r (SApp _ f vs)        = "idris_pushFrame " ++ showSep " " (map qVar vs) ++ cr l ++
+                                  name f ++ cr l ++
+                                  "idris_popFrame" ++
+                                  cgRet l r
+cgBody l r (SLet (Loc i) e1 e2) = cgBody l (loc i) e1 ++ cr l ++ cgBody l r e2
+-- cgBody l r (SUpdate _ e)
+-- cgBody l r (SProj v i)
+cgBody l r (SCon _ t _ vs)      = "idris_makeArray " ++ showSep " " (show t : map qVar vs) ++
+                                  cgRet l r
+cgBody l r (SCase _ v cs)       = cgSwitch l r v cs
+cgBody l r (SChkCase v cs)      = cgSwitch l r v cs
+cgBody _ r (SConst c)           = r ++ "=" ++ cgConst c
+cgBody _ r (SOp o vs)           = cgOp r o vs
+cgBody _ r SNothing             = r ++ "=0"
+-- cgBody l r (SError x)
+cgBody _ _ x                    = error $ "Expression " ++ show x ++ " is not supported"
+
+cgRet :: Int -> String -> String
+cgRet l r | r == ret  = ""
+          | otherwise = cr l ++ r ++ "=" ++ dRet
+
+cgSwitch :: Int -> String -> LVar -> [SAlt] -> String
+cgSwitch l r v cs =
+    let
+      hasConCase = any isConCase cs
+    in
+      (if hasConCase
+        then "idris_indexArray " ++ qVar v ++ " 0" ++ cr l
+        else "") ++
+      "case " ++ (if hasConCase then dRet else dVar v) ++ " in" ++ cr l ++
+      showSep (cr (l + 1) ++ ";;" ++ cr l) (map (cgCase (l + 1) r v) cs) ++ cr l ++
+      "esac"
+  where
+    isConCase (SConCase _ _ _ _ _) = True
+    isConCase _                    = False
+
+cgCase :: Int -> String -> LVar -> SAlt -> String
+cgCase l r _ (SDefaultCase e)        = "*)" ++ cr l ++
+                                       cgBody l r e
+cgCase l r _ (SConstCase t e)        = show t ++ ")" ++ cr l ++
+                                       cgBody l r e
+cgCase l r v (SConCase i0 t _ ns0 e) = show t ++ ")" ++ cr l ++
+                                       project 1 i0 ns0 ++
+                                       cgBody l r e
+  where
+    project :: Int -> Int -> [Name] -> String
+    project _ _ []       = ""
+    project k i (_ : ns) = "idris_indexArray " ++ qVar v ++ " " ++ show k ++ cr l ++
+                           loc i ++ "=" ++ dRet ++ cr l ++
+                           project (k + 1) (i + 1) ns
+
 cgConst :: Const -> String
 cgConst (I i)             = show i
 cgConst (BI i)            = show i
-cgConst (Ch c)            = "'" ++ [c] ++ "'"
+-- cgConst (Ch c)
 cgConst (Str s)           = "'" ++ s ++ "'"
 cgConst TheWorld          = "0"
 cgConst x | isTypeConst x = "0"
           | otherwise     = error $ "Constant " ++ show x ++ " is not supported"
 
-cgFun :: Name -> [Name] -> SExp -> String
-cgFun n _args def =
-    name n ++ " () {" ++ cr 1 ++
-    cgFunBody 1 ret def ++ "\n}\n\n\n"
-
-cgFunBody :: Int -> String -> SExp -> String
-cgFunBody l r (SV (Glob fun))      = "idris_pushFrame" ++ cr l ++
-                                     name fun ++ cr l ++
-                                     "idris_popFrame" ++
-                                     retCall l r
-cgFunBody _ r (SV (Loc i))         = r ++ "=" ++ dVar (Loc i)
-cgFunBody l r (SApp _ fun vars)    = "idris_pushFrame " ++ showSep " " (map qVar vars) ++ cr l ++
-                                     name fun ++ cr l ++
-                                     "idris_popFrame" ++
-                                     retCall l r
-cgFunBody l r (SLet (Loc i) e1 e2) = cgFunBody l (loc i) e1 ++ cr l ++ cgFunBody l r e2
--- cgFunBody l r (SUpdate _ e)
--- cgFunBody l r (SProj v i)
-cgFunBody l r (SCon _ t _ vars)    = "idris_makeArray " ++ showSep " " (show t : map qVar vars) ++
-                                     retCall l r
-cgFunBody l r (SCase _ v alts)     = cgCase l r v alts
-cgFunBody l r (SChkCase v alts)    = cgCase l r v alts
-cgFunBody _ r (SConst c)           = r ++ "=" ++ cgConst c
-cgFunBody _ r (SOp op args)        = cgOp r op args
-cgFunBody _ r SNothing             = r ++ "=0"
--- cgFunBody l r (SError x)
-cgFunBody _ _ x                    = error $ "Expression " ++ show x ++ " is not supported"
-
-retCall :: Int -> String -> String
-retCall l r = if r == ret then "" else cr l ++ r ++ "=" ++ dRet
-
-conCase :: SAlt -> Bool
-conCase (SConCase _ _ _ _ _) = True
-conCase _                    = False
-
-cgCase :: Int -> String -> LVar -> [SAlt] -> String
-cgCase l r v alts = (if hasConCase
-                         then "idris_indexArray " ++ qVar v ++ " 0" ++ cr l
-                         else "") ++
-                       "case " ++ (if hasConCase then dRet else dVar v) ++ " in" ++ cr l ++
-                       showSep (cr (l + 1) ++ ";;" ++ cr l) (map (cgAlt l r v) alts) ++ cr l ++
-                       "esac"
-  where
-    hasConCase :: Bool
-    hasConCase = any conCase alts
-
-cgAlt :: Int -> String -> LVar -> SAlt -> String
-cgAlt l r _ (SDefaultCase e)        = "*)" ++ cr (l + 1) ++ cgFunBody (l + 1) r e
-cgAlt l r _ (SConstCase t e)        = show t ++ ")" ++ cr (l + 1) ++ cgFunBody (l + 1) r e
-cgAlt l r v (SConCase i0 t _ ns0 e) = show t ++ ")" ++ cr (l + 1) ++ project 1 i0 ns0 ++ cgFunBody (l + 1) r e
-  where
-    project :: Int -> Int -> [Name] -> String
-    project _ _ []       = ""
-    project k i (_ : ns) = "idris_indexArray " ++ qVar v ++ " " ++ show k ++ cr (l + 1) ++
-                           loc i ++ "=" ++ dRet ++ cr (l + 1) ++
-                           project (k + 1) (i + 1) ns
-
 cgOp :: String -> PrimFn -> [LVar] -> String
-cgOp r (LPlus  (ATInt _)) [x, y] = r ++ "=$(( " ++ var x ++ " + "  ++ var y ++ " ))"
-cgOp r (LMinus (ATInt _)) [x, y] = r ++ "=$(( " ++ var x ++ " - "  ++ var y ++ " ))"
-cgOp r (LTimes (ATInt _)) [x, y] = r ++ "=$(( " ++ var x ++ " * "  ++ var y ++ " ))"
--- cgOp r LUDiv _
--- cgOp r LSDiv _
--- cgOp r LURem _
--- cgOp r LSRem _
--- cgOp r LAnd _
--- cgOp r LOr _
--- cgOp r LXOr _
--- cgOp r LCompl _
--- cgOp r LSHL _
--- cgOp r LLSHR _
--- cgOp r LASHR _
-cgOp r (LEq    (ATInt _)) [x, y] = r ++ "=$(( " ++ var x ++ " == " ++ var y ++ " ))"
--- cgOp r LLt _
--- cgOp r LLe _
--- cgOp r LGt _
--- cgOp r LGe _
-cgOp r (LSLt   (ATInt _)) [x, y] = r ++ "=$(( " ++ var x ++ " < "  ++ var y ++ " ))"
-cgOp r (LSLe   (ATInt _)) [x, y] = r ++ "=$(( " ++ var x ++ " <= " ++ var y ++ " ))"
-cgOp r (LSGt   (ATInt _)) [x, y] = r ++ "=$(( " ++ var x ++ " > "  ++ var y ++ " ))"
-cgOp r (LSGe   (ATInt _)) [x, y] = r ++ "=$(( " ++ var x ++ " >= " ++ var y ++ " ))"
-cgOp r (LSExt _ _)        [x]    = r ++ "=" ++ dVar x
--- cgOp r LZExt _ _
-cgOp r (LTrunc _ _)       [x]    = r ++ "=" ++ dVar x
-cgOp r LStrConcat         [x, y] = r ++ "=" ++ dVar x ++ dVar y
-cgOp r LStrLt             [x, y] = r ++ "=[[ " ++ dVar x ++ " < " ++ qVar y ++ " ]]"
-cgOp r LStrEq             [x, y] = r ++ "=[[ " ++ dVar x ++ " = " ++ qVar y ++ " ]]"
-cgOp r LStrLen            [x]    = r ++ "=${#" ++ var x ++ "}"
--- cgOp r LIntFloat _
--- cgOp r LFloatInt _
-cgOp r (LIntStr _)        [x]    = r ++ "=" ++ dVar x
--- cgOp r LStrInt _
+cgOp r (LPlus  (ATInt _)) [n, m] = r ++ "=$(( " ++ var n ++ " + "  ++ var m ++ " ))"
+cgOp r (LMinus (ATInt _)) [n, m] = r ++ "=$(( " ++ var n ++ " - "  ++ var m ++ " ))"
+cgOp r (LTimes (ATInt _)) [n, m] = r ++ "=$(( " ++ var n ++ " * "  ++ var m ++ " ))"
+-- cgOp r LUDiv
+-- cgOp r LSDiv
+-- cgOp r LURem
+-- cgOp r LSRem
+-- cgOp r LAnd
+-- cgOp r LOr
+-- cgOp r LXOr
+-- cgOp r LCompl
+-- cgOp r LSHL
+-- cgOp r LLSHR
+-- cgOp r LASHR
+cgOp r (LEq    (ATInt _)) [n, m] = r ++ "=$(( " ++ var n ++ " == " ++ var m ++ " ))"
+-- cgOp r LLt
+-- cgOp r LLe
+-- cgOp r LGt
+-- cgOp r LGe
+cgOp r (LSLt   (ATInt _)) [n, m] = r ++ "=$(( " ++ var n ++ " < "  ++ var m ++ " ))"
+cgOp r (LSLe   (ATInt _)) [n, m] = r ++ "=$(( " ++ var n ++ " <= " ++ var m ++ " ))"
+cgOp r (LSGt   (ATInt _)) [n, m] = r ++ "=$(( " ++ var n ++ " > "  ++ var m ++ " ))"
+cgOp r (LSGe   (ATInt _)) [n, m] = r ++ "=$(( " ++ var n ++ " >= " ++ var m ++ " ))"
+cgOp r (LSExt _ _)        [n]    = r ++ "="     ++ dVar n
+-- cgOp r LZExt
+-- cgOp r LTrunc
+cgOp r LStrConcat         [s, t] = r ++ "="    ++ dVar s           ++ dVar t
+cgOp r LStrLt             [s, t] = r ++ "=[[ " ++ dVar s ++ " < "  ++ qVar t ++ " ]]"
+cgOp r LStrEq             [s, t] = r ++ "=[[ " ++ dVar s ++ " = "  ++ qVar t ++ " ]]"
+cgOp r LStrLen            [s]    = r ++ "=${#" ++  var s ++ "}"
+-- cgOp r LIntFloat
+-- cgOp r LFloatInt
+cgOp r (LIntStr _)        [n]    = r ++ "=" ++ dVar n
+-- cgOp r LStrInt
 -- cgOp r LFloatStr
 -- cgOp r LStrFloat
-cgOp r (LChInt _)         [x]    = r ++ "=" ++ dVar x
-cgOp r (LIntCh _)         [x]    = r ++ "=" ++ dVar x
--- cgOp r LBitCast _ _
+-- cgOp r LChInt
+-- cgOp r LIntCh
+-- cgOp r LBitCast
 -- cgOp r LFExp
 -- cgOp r LFLog
 -- cgOp r LFSin
@@ -168,17 +173,17 @@ cgOp r (LIntCh _)         [x]    = r ++ "=" ++ dVar x
 -- cgOp r LFFloor
 -- cgOp r LFCeil
 -- cgOp r LFNegate
-cgOp r LStrHead           [x]    = r ++ "=" ++ "${" ++ var x ++ ":0:1}"
-cgOp r LStrTail           [x]    = r ++ "=" ++ "${" ++ var x ++ ":1}"
-cgOp r LStrCons           [x, y] = r ++ "=" ++ dVar x ++ dVar y
-cgOp r LStrIndex          [x, y] = r ++ "=" ++ "${" ++ var x ++ ":" ++ dVar y ++ ":1}"
+cgOp r LStrHead           [s]    = r ++ "=" ++ "${" ++ var s ++ ":0:1}"
+cgOp r LStrTail           [s]    = r ++ "=" ++ "${" ++ var s ++ ":1}"
+cgOp r LStrCons           [c, s] = r ++ "=" ++ dVar c ++ dVar s
+cgOp r LStrIndex          [s, n] = r ++ "=" ++ "${" ++ var s ++ ":" ++ dVar n ++ ":1}"
 -- cgOp r LStrRev
 cgOp r LReadStr           [_]    = "idris_readStr \"${" ++ r ++ "}\""
-cgOp r LWriteStr          [_, x] = "idris_writeStr " ++ r ++ " " ++ qVar x
+cgOp r LWriteStr          [_, s] = "idris_writeStr " ++ r ++ " " ++ qVar s
 -- cgOp r LSystemInfo
 -- cgOp r LFork
 -- cgOp r LPar
--- cgOp r LExternal _
+-- cgOp r LExternal
 -- cgOp r LNoOp
--- cgOp _ op _                      = error $ "Operator " ++ show op ++ " is not supported"
-cgOp _ op _                      = "idris_error 'Operator " ++ show op ++ " is not supported'"
+-- cgOp _ o _                       = error $ "Operator " ++ show o ++ " is not supported"
+cgOp _ o _                       = "idris_error 'Operator " ++ show o ++ " is not supported'"
