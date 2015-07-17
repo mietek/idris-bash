@@ -21,4 +21,5 @@ executable idris-bash
   ghc-options:        -O2 -Wall -threaded -rtsopts -funbox-strict-fields
   ghc-prof-options:   -auto-all -caf-all
   build-depends:      base >= 4 && < 5,
+                      containers,
                       idris
