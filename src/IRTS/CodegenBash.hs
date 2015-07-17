@@ -18,8 +18,8 @@ codegenBash ci = do
       name (sMN 0 "runMain") ++ "\n"
 
 doCodegen :: (Name, SDecl) -> String
-doCodegen (n, SFun _ args _i def) =
-    cgFun n args def
+doCodegen (n, SFun _ args _ e) =
+    cgFun n (length args) e
 
 name :: Name -> String
 name n =
@@ -32,6 +32,7 @@ cr :: Int -> String
 cr l = "\n" ++ replicate l '\t'
 
 loc :: Int -> String
+loc 0 = "_S[_SP]"
 loc i = "_S[_SP + " ++ show i ++ "]"
 
 ret :: String
@@ -50,13 +51,26 @@ dVar x = "${" ++ var x ++ "}"
 qVar :: LVar -> String
 qVar x = "\"" ++ dVar x ++ "\""
 
-cgFun :: Name -> [Name] -> SExp -> String
-cgFun n args def =
+cgFun :: Name -> Int -> SExp -> String
+cgFun n argCount e =
     name n ++ " () {" ++ cr 1 ++
-    (if frameSize == length args then "" else "_SQ=$(( _SP + " ++ show frameSize ++ " ))" ++ cr 1) ++
-    cgBody 1 ret def ++ "\n}\n\n\n"
+    pushFrame ++
+    moveArgs ++
+    sizeFrame ++
+    cgBody 1 ret e ++
+    popFrame ++ "\n}\n\n\n"
   where
-    frameSize = measureBody def
+    frameSize = max argCount (measureBody e)
+    pushFrame | frameSize == 0 = ""
+              | otherwise      = "_PSP[${_SR}]=${_SP}; _SP=${_SQ}; _SR=$(( _SR + 1 ))" ++ cr 1
+    moveArgs  | argCount == 0  = ""
+              | otherwise      = showSep (cr 1) (map moveArg [1..argCount]) ++ cr 1
+    moveArg 1 = "_S[${_SP}]=$1"
+    moveArg i = "_S[${_SP} + " ++ show (i - 1) ++ "]=$" ++ show i
+    sizeFrame | frameSize == 0 = ""
+              | otherwise      = "_SQ=$(( _SP + " ++ show frameSize ++ " ))" ++ cr 1
+    popFrame  | frameSize == 0 = ""
+              | otherwise      = cr 1 ++ "_SQ=${_SP}; _SR=$(( _SR - 1 )); _SP=${_PSP[${_SR}]}"
 
 measureBody :: SExp -> Int
 measureBody (SV (Glob _))        = 0
@@ -84,14 +98,10 @@ measureCase (SConCase _ _ _ [] e) = measureBody e
 measureCase (SConCase i _ _ ns e) = max (i + length ns - 1) (measureBody e)
 
 cgBody :: Int -> String -> SExp -> String
-cgBody l r (SV (Glob f))        = "idris_pushFrame" ++ cr l ++
-                                  name f ++ cr l ++
-                                  "idris_popFrame" ++
+cgBody l r (SV (Glob f))        = name f ++
                                   cgRet l r
 cgBody _ r (SV (Loc i))         = r ++ "=" ++ dVar (Loc i)
-cgBody l r (SApp _ f vs)        = "idris_pushFrame " ++ showSep " " (map qVar vs) ++ cr l ++
-                                  name f ++ cr l ++
-                                  "idris_popFrame" ++
+cgBody l r (SApp _ f vs)        = name f ++ " " ++ showSep " " (map qVar vs) ++
                                   cgRet l r
 cgBody l r (SLet (Loc i) e1 e2) = cgBody l (loc i) e1 ++ cr l ++
                                   cgBody l r e2
