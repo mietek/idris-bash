@@ -133,7 +133,7 @@ cgBody _  l r (SCon _ t _ vs)      = makeArray l r (show t : map qVar vs)
 cgBody tm l r (SCase _ v cs)       = cgSwitch tm l r v cs
 cgBody tm l r (SChkCase v cs)      = cgSwitch tm l r v cs
 cgBody _  _ r (SConst c)           = r ++ "=" ++ cgConst c
-cgBody _  _ r (SOp o vs)           = r ++ "=" ++ cgOp o vs
+cgBody _  _ r (SOp o vs)           = cgOp r o vs
 cgBody _  _ r SNothing             = r ++ "=0"
 -- cgBody tm l r (SError x)
 cgBody _  _ _ x                    = error $ "Expression " ++ show x ++ " is not supported"
@@ -192,69 +192,69 @@ cgConst TheWorld          = "0"
 cgConst x | isTypeConst x = "0"
           | otherwise     = error $ "Constant " ++ show x ++ " is not supported"
 
-cgOp :: PrimFn -> [LVar] -> String
-cgOp (LPlus  (ATInt _)) [n, m] = "$(( " ++ var n ++ " + "  ++ var m ++ " ))"
-cgOp (LMinus (ATInt _)) [n, m] = "$(( " ++ var n ++ " - "  ++ var m ++ " ))"
-cgOp (LTimes (ATInt _)) [n, m] = "$(( " ++ var n ++ " * "  ++ var m ++ " ))"
--- cgOp LUDiv
--- cgOp LSDiv
--- cgOp LURem
--- cgOp LSRem
--- cgOp LAnd
--- cgOp LOr
--- cgOp LXOr
--- cgOp LCompl
--- cgOp LSHL
--- cgOp LLSHR
--- cgOp LASHR
-cgOp (LEq    (ATInt _)) [n, m] = "$(( " ++ var n ++ " == " ++ var m ++ " ))"
--- cgOp LLt
--- cgOp LLe
--- cgOp LGt
--- cgOp LGe
-cgOp (LSLt   (ATInt _)) [n, m] = "$(( " ++ var n ++ " < "  ++ var m ++ " ))"
-cgOp (LSLe   (ATInt _)) [n, m] = "$(( " ++ var n ++ " <= " ++ var m ++ " ))"
-cgOp (LSGt   (ATInt _)) [n, m] = "$(( " ++ var n ++ " > "  ++ var m ++ " ))"
-cgOp (LSGe   (ATInt _)) [n, m] = "$(( " ++ var n ++ " >= " ++ var m ++ " ))"
-cgOp (LSExt _ _)        [n]    = dVar n
--- cgOp LZExt
--- cgOp LTrunc
-cgOp LStrConcat         [s, t] = dVar s ++ dVar t
--- cgOp LStrLt
--- cgOp LStrEq
-cgOp LStrLen            [s]    = "${#" ++  var s ++ "}"
--- cgOp LIntFloat
--- cgOp LFloatInt
-cgOp (LIntStr _)        [n]    = dVar n
--- cgOp LStrInt
--- cgOp LFloatStr
--- cgOp LStrFloat
--- cgOp LChInt
--- cgOp LIntCh
--- cgOp LBitCast
--- cgOp LFExp
--- cgOp LFLog
--- cgOp LFSin
--- cgOp LFCos
--- cgOp LFTan
--- cgOp LFASin
--- cgOp LFACos
--- cgOp LFATan
--- cgOp LFSqrt
--- cgOp LFFloor
--- cgOp LFCeil
--- cgOp LFNegate
-cgOp LStrHead           [s]    = "${" ++ var s ++ ":0:1}"
-cgOp LStrTail           [s]    = "${" ++ var s ++ ":1}"
-cgOp LStrCons           [c, s] = dVar c ++ dVar s
-cgOp LStrIndex          [s, n] = "${" ++ var s ++ ":" ++ dVar n ++ ":1}"
--- cgOp LStrRev
--- cgOp LReadStr
-cgOp LWriteStr          [_, s] = "idris_writeStr " ++ qVar s
--- cgOp LSystemInfo
--- cgOp LFork
--- cgOp LPar
--- cgOp LExternal
--- cgOp LNoOp
--- cgOp o _                       = error $ "Operator " ++ show o ++ " is not supported"
-cgOp o _                       = "idris_error 'Operator " ++ show o ++ " is not supported'"
+cgOp :: String -> PrimFn -> [LVar] -> String
+cgOp r (LPlus  (ATInt _)) [n, m] = r ++ "=$(( " ++ var n ++ " + "  ++ var m ++ " ))"
+cgOp r (LMinus (ATInt _)) [n, m] = r ++ "=$(( " ++ var n ++ " - "  ++ var m ++ " ))"
+cgOp r (LTimes (ATInt _)) [n, m] = r ++ "=$(( " ++ var n ++ " * "  ++ var m ++ " ))"
+-- cgOp r LUDiv
+-- cgOp r LSDiv
+-- cgOp r LURem
+-- cgOp r LSRem
+-- cgOp r LAnd
+-- cgOp r LOr
+-- cgOp r LXOr
+-- cgOp r LCompl
+-- cgOp r LSHL
+-- cgOp r LLSHR
+-- cgOp r LASHR
+cgOp r (LEq    (ATInt _)) [n, m] = r ++ "=$(( " ++ var n ++ " == " ++ var m ++ " ))"
+-- cgOp r LLt
+-- cgOp r LLe
+-- cgOp r LGt
+-- cgOp r LGe
+cgOp r (LSLt   (ATInt _)) [n, m] = r ++ "=$(( " ++ var n ++ " < "  ++ var m ++ " ))"
+cgOp r (LSLe   (ATInt _)) [n, m] = r ++ "=$(( " ++ var n ++ " <= " ++ var m ++ " ))"
+cgOp r (LSGt   (ATInt _)) [n, m] = r ++ "=$(( " ++ var n ++ " > "  ++ var m ++ " ))"
+cgOp r (LSGe   (ATInt _)) [n, m] = r ++ "=$(( " ++ var n ++ " >= " ++ var m ++ " ))"
+cgOp r (LSExt _ _)        [n]    = r ++ "=" ++ dVar n
+-- cgOp r LZExt
+-- cgOp r LTrunc
+cgOp r LStrConcat         [s, t] = r ++ "=" ++ dVar s ++ dVar t
+-- cgOp r LStrLt
+-- cgOp r LStrEq
+cgOp r LStrLen            [s]    = r ++ "=${#" ++  var s ++ "}"
+-- cgOp r LIntFloat
+-- cgOp r LFloatInt
+cgOp r (LIntStr _)        [n]    = r ++ "=" ++ dVar n
+-- cgOp r LStrInt
+-- cgOp r LFloatStr
+-- cgOp r LStrFloat
+-- cgOp r LChInt
+-- cgOp r LIntCh
+-- cgOp r LBitCast
+-- cgOp r LFExp
+-- cgOp r LFLog
+-- cgOp r LFSin
+-- cgOp r LFCos
+-- cgOp r LFTan
+-- cgOp r LFASin
+-- cgOp r LFACos
+-- cgOp r LFATan
+-- cgOp r LFSqrt
+-- cgOp r LFFloor
+-- cgOp r LFCeil
+-- cgOp r LFNegate
+cgOp r LStrHead           [s]    = r ++ "=${" ++ var s ++ ":0:1}"
+cgOp r LStrTail           [s]    = r ++ "=${" ++ var s ++ ":1}"
+cgOp r LStrCons           [c, s] = r ++ "=" ++ dVar c ++ dVar s
+cgOp r LStrIndex          [s, n] = r ++ "=${" ++ var s ++ ":" ++ dVar n ++ ":1}"
+-- cgOp r LStrRev
+-- cgOp r LReadStr
+cgOp _ LWriteStr          [_, s] = "echo " ++ qVar s
+-- cgOp r LSystemInfo
+-- cgOp r LFork
+-- cgOp r LPar
+-- cgOp r LExternal
+-- cgOp r LNoOp
+-- cgOp _ o _                       = error $ "Operator " ++ show o ++ " is not supported"
+cgOp _ o _                       = "echo 'Operator " ++ show o ++ " is not supported' >&2"
