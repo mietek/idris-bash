@@ -51,9 +51,37 @@ qVar :: LVar -> String
 qVar x = "\"" ++ dVar x ++ "\""
 
 cgFun :: Name -> [Name] -> SExp -> String
-cgFun n _args def =
+cgFun n args def =
     name n ++ " () {" ++ cr 1 ++
+    (if frameSize == length args then "" else "_SQ=$(( _SP + " ++ show frameSize ++ " ))" ++ cr 1) ++
     cgBody 1 ret def ++ "\n}\n\n\n"
+  where
+    frameSize = measureBody def
+
+measureBody :: SExp -> Int
+measureBody (SV (Glob _))        = 0
+measureBody (SV (Loc i))         = i
+measureBody (SApp _ _ _)         = 0
+measureBody (SLet (Loc i) e1 e2) = max i (max (measureBody e1) (measureBody e2))
+-- measureBody (SUpdate _ _)
+-- measureBody (SProj _ _)
+measureBody (SCon _ _ _ _)       = 0
+measureBody (SCase _ _ cs)       = measureSwitch cs
+measureBody (SChkCase _ cs)      = measureSwitch cs
+measureBody (SConst _)           = 0
+measureBody (SOp _ _)            = 0
+measureBody SNothing             = 0
+-- measureBody (SError x)
+measureBody x                    = error $ "Expression " ++ show x ++ " is not supported"
+
+measureSwitch :: [SAlt] -> Int
+measureSwitch cs = maximum (map measureCase cs)
+
+measureCase :: SAlt -> Int
+measureCase (SDefaultCase e)      = measureBody e
+measureCase (SConstCase _ e)      = measureBody e
+measureCase (SConCase _ _ _ [] e) = measureBody e
+measureCase (SConCase i _ _ ns e) = max (i + length ns - 1) (measureBody e)
 
 cgBody :: Int -> String -> SExp -> String
 cgBody l r (SV (Glob f))        = "idris_pushFrame" ++ cr l ++
@@ -65,8 +93,7 @@ cgBody l r (SApp _ f vs)        = "idris_pushFrame " ++ showSep " " (map qVar vs
                                   name f ++ cr l ++
                                   "idris_popFrame" ++
                                   cgRet l r
-cgBody l r (SLet (Loc i) e1 e2) = "idris_growFrame " ++ show i ++ cr l ++
-                                  cgBody l (loc i) e1 ++ cr l ++
+cgBody l r (SLet (Loc i) e1 e2) = cgBody l (loc i) e1 ++ cr l ++
                                   cgBody l r e2
 -- cgBody l r (SUpdate _ e)
 -- cgBody l r (SProj v i)
@@ -108,8 +135,7 @@ cgCase l r v (SConCase i0 t _ ns0 e) = show t ++ ")" ++ cr l ++
   where
     project :: Int -> Int -> [Name] -> String
     project _ _ []       = ""
-    project k i (_ : ns) = "idris_growFrame " ++ show i ++ cr l ++
-                           loc i ++ "=${_A[" ++ var v ++ " + " ++ show k ++ "]}" ++ cr l ++
+    project k i (_ : ns) = loc i ++ "=${_A[" ++ var v ++ " + " ++ show k ++ "]}" ++ cr l ++
                            project (k + 1) (i + 1) ns
 
 cgConst :: Const -> String

@@ -32,13 +32,6 @@ idris_popFrame () {
 }
 
 
-idris_growFrame () {
-	if (( _SQ < _SP + $1 )); then
-		_SQ=$(( _SP + $1 ))
-	fi
-}
-
-
 idris_makeArray () {
 	_R=${_AP}
 	# local log="${_AP}"
