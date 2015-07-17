@@ -60,7 +60,7 @@ cgFun n argCount e =
     cgBody 1 ret e ++
     popFrame ++ "\n}\n\n\n"
   where
-    frameSize = max argCount (measureBody e)
+    frameSize = max argCount (locCountBody e)
     pushFrame | frameSize == 0 = ""
               | otherwise      = "_PSP[${_SR}]=${_SP}; _SP=${_SQ}; _SR=$(( _SR + 1 ))" ++ cr 1
     moveArgs  | argCount == 0  = ""
@@ -72,30 +72,18 @@ cgFun n argCount e =
     popFrame  | frameSize == 0 = ""
               | otherwise      = cr 1 ++ "_SQ=${_SP}; _SR=$(( _SR - 1 )); _SP=${_PSP[${_SR}]}"
 
-measureBody :: SExp -> Int
-measureBody (SV (Glob _))        = 0
-measureBody (SV (Loc i))         = i
-measureBody (SApp _ _ _)         = 0
-measureBody (SLet (Loc i) e1 e2) = max i (max (measureBody e1) (measureBody e2))
--- measureBody (SUpdate _ _)
--- measureBody (SProj _ _)
-measureBody (SCon _ _ _ _)       = 0
-measureBody (SCase _ _ cs)       = measureSwitch cs
-measureBody (SChkCase _ cs)      = measureSwitch cs
-measureBody (SConst _)           = 0
-measureBody (SOp _ _)            = 0
-measureBody SNothing             = 0
--- measureBody (SError x)
-measureBody x                    = error $ "Expression " ++ show x ++ " is not supported"
+locCountBody :: SExp -> Int
+locCountBody (SV (Loc i))         = i + 1
+locCountBody (SLet (Loc i) e1 e2) = max (i + 1) (max (locCountBody e1) (locCountBody e2))
+locCountBody (SCase _ _ cs)       = maximum (map locCountCase cs)
+locCountBody (SChkCase _ cs)      = maximum (map locCountCase cs)
+locCountBody _                    = 0
 
-measureSwitch :: [SAlt] -> Int
-measureSwitch cs = maximum (map measureCase cs)
-
-measureCase :: SAlt -> Int
-measureCase (SDefaultCase e)      = measureBody e
-measureCase (SConstCase _ e)      = measureBody e
-measureCase (SConCase _ _ _ [] e) = measureBody e
-measureCase (SConCase i _ _ ns e) = max (i + length ns - 1) (measureBody e)
+locCountCase :: SAlt -> Int
+locCountCase (SDefaultCase e)      = locCountBody e
+locCountCase (SConstCase _ e)      = locCountBody e
+locCountCase (SConCase _ _ _ [] e) = locCountBody e
+locCountCase (SConCase i _ _ ns e) = max (i + length ns) (locCountBody e)
 
 cgBody :: Int -> String -> SExp -> String
 cgBody l r (SV (Glob f))        = name f ++
