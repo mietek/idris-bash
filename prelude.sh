@@ -18,7 +18,7 @@ idris_makeArray () {
 	_R=${_AP}
 	# local log="${_AP}"
 	for arg in "$@"; do
-		_A[${_AP}]=${arg}
+		_A[_AP]=${arg}
 		_AP=$(( _AP + 1 ))
 		# log="${log} ${arg}"
 	done

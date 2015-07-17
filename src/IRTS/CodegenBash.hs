@@ -62,15 +62,15 @@ cgFun n argCount e =
   where
     frameSize = max argCount (locCountBody e)
     pushFrame | frameSize == 0 = ""
-              | otherwise      = "_PSP[${_SR}]=${_SP}; _SP=${_SQ}; _SR=$(( _SR + 1 ))" ++ cr 1
+              | otherwise      = "_PSP[_SR]=${_SP}; _SP=${_SQ}; _SR=$(( _SR + 1 ))" ++ cr 1
     moveArgs  | argCount == 0  = ""
               | otherwise      = showSep (cr 1) (map moveArg [1..argCount]) ++ cr 1
-    moveArg 1 = "_S[${_SP}]=$1"
-    moveArg i = "_S[${_SP} + " ++ show (i - 1) ++ "]=$" ++ show i
+    moveArg 1 = "_S[_SP]=$1"
+    moveArg i = "_S[_SP + " ++ show (i - 1) ++ "]=$" ++ show i
     sizeFrame | frameSize == 0 = ""
               | otherwise      = "_SQ=$(( _SP + " ++ show frameSize ++ " ))" ++ cr 1
     popFrame  | frameSize == 0 = ""
-              | otherwise      = cr 1 ++ "_SQ=${_SP}; _SR=$(( _SR - 1 )); _SP=${_PSP[${_SR}]}"
+              | otherwise      = cr 1 ++ "_SQ=${_SP}; _SR=$(( _SR - 1 )); _SP=${_PSP[_SR]}"
 
 locCountBody :: SExp -> Int
 locCountBody (SV (Loc i))         = i + 1
@@ -112,10 +112,9 @@ cgRet l r | r == ret  = ""
 cgSwitch :: Int -> String -> LVar -> [SAlt] -> String
 cgSwitch l r v cs =
     let
-      v'  = dVar v
-      v'' = if any isConCase cs then "${_A[" ++ v' ++ "]}" else v'
+      v' = if any isConCase cs then "${_A[" ++ var v ++ "]}" else dVar v
     in
-      "case " ++ v'' ++ " in" ++ cr l ++
+      "case " ++ v' ++ " in" ++ cr l ++
       showSep (cr (l + 1) ++ ";;" ++ cr l) (map (cgCase (l + 1) r v) cs) ++ cr l ++
       "esac"
   where
