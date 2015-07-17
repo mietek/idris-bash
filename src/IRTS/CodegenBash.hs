@@ -95,8 +95,7 @@ cgBody l r (SLet (Loc i) e1 e2) = cgBody l (loc i) e1 ++ cr l ++
                                   cgBody l r e2
 -- cgBody l r (SUpdate _ e)
 -- cgBody l r (SProj v i)
-cgBody l r (SCon _ t _ vs)      = "idris_makeArray " ++ showSep " " (show t : map qVar vs) ++
-                                  cgRet l r
+cgBody l r (SCon _ t _ vs)      = makeArray l r (show t : map qVar vs)
 cgBody l r (SCase _ v cs)       = cgSwitch l r v cs
 cgBody l r (SChkCase v cs)      = cgSwitch l r v cs
 cgBody _ r (SConst c)           = r ++ "=" ++ cgConst c
@@ -104,6 +103,21 @@ cgBody _ r (SOp o vs)           = r ++ "=" ++ cgOp o vs
 cgBody _ r SNothing             = r ++ "=0"
 -- cgBody l r (SError x)
 cgBody _ _ x                    = error $ "Expression " ++ show x ++ " is not supported"
+
+makeArray :: Int -> String -> [String] -> String
+makeArray l r args =
+    makeElements ++
+    r ++ "=${_AP}" ++
+    cr l ++ "echo \"${_AP}\" " ++ showSep (" ") args ++
+    pushArray
+  where
+    argCount = length args
+    makeElements | argCount == 0 = ""
+                 | otherwise     = showSep (cr l) (map makeElement (zip [1..argCount] args)) ++ cr l
+    makeElement (1, arg) = "_A[_AP]=" ++ arg
+    makeElement (i, arg) = "_A[_AP + " ++ show (i - 1) ++ "]=" ++ arg
+    pushArray    | argCount == 0 = ""
+                 | otherwise     = cr l ++ "_AP=$(( _AP + " ++ show argCount ++ " ))"
 
 cgRet :: Int -> String -> String
 cgRet l r | r == ret  = ""

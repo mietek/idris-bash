@@ -14,18 +14,6 @@ declare -a _A=() # Array frame data
 declare -i _AP=0 # Beginning of current array frame
 
 
-idris_makeArray () {
-	_R=${_AP}
-	# local log="${_AP}"
-	for arg in "$@"; do
-		_A[_AP]=${arg}
-		_AP=$(( _AP + 1 ))
-		# log="${log} ${arg}"
-	done
-	# echo "${log}"
-}
-
-
 idris_error () {
 	echo "$1" >&2
 	exit 1
