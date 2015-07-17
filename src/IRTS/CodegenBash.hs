@@ -32,7 +32,7 @@ cr :: Int -> String
 cr l = "\n" ++ replicate l '\t'
 
 loc :: Int -> String
-loc i = "_S[$(( _SP + " ++ show i ++ " ))]"
+loc i = "_S[_SP + " ++ show i ++ "]"
 
 ret :: String
 ret = "_R"
@@ -109,7 +109,7 @@ cgCase l r v (SConCase i0 t _ ns0 e) = show t ++ ")" ++ cr l ++
     project :: Int -> Int -> [Name] -> String
     project _ _ []       = ""
     project k i (_ : ns) = "idris_growFrame " ++ show i ++ cr l ++
-                           loc i ++ "=${_A[$(( " ++ var v ++ " + " ++ show k ++ " ))]}" ++ cr l ++
+                           loc i ++ "=${_A[" ++ var v ++ " + " ++ show k ++ "]}" ++ cr l ++
                            project (k + 1) (i + 1) ns
 
 cgConst :: Const -> String
