@@ -129,7 +129,7 @@ cgBody tm l r (SLet (Loc i) e1 e2) = cgBody tm l (loc i) e1 ++ cr l ++
 -- cgBody tm l r (SUpdate _ e)
 -- cgBody tm l r (SProj v i)
 cgBody tm _ r (SCon _ t _ [])      = r ++ "=" ++ show (tm M.! t)
-cgBody _  l r (SCon _ t _ vs)      = makeArray l r (show t : map qVar vs)
+cgBody _  l r (SCon _ t _ vs)      = makeArray l r (show t : map dVar vs)
 cgBody tm l r (SCase _ v cs)       = cgSwitch tm l r v cs
 cgBody tm l r (SChkCase v cs)      = cgSwitch tm l r v cs
 cgBody _  _ r (SConst c)           = r ++ "=" ++ cgConst c
