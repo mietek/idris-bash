@@ -142,7 +142,7 @@ makeArray :: Int -> String -> [String] -> String
 makeArray l r args =
     makeElements ++
     r ++ "=${_AP}" ++
-    cr l ++ "echo \"${_AP}\" " ++ showSep (" ") args ++
+    -- cr l ++ "echo \"${_AP}\" " ++ showSep (" ") args ++
     pushArray
   where
     argCount = length args
