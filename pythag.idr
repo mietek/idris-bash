@@ -5,4 +5,4 @@ pythag max = [(x, y, z) | z <- [1..max], y <- [1..z], x <- [1..y],
                           x * x + y *y == z * z]
 
 main : IO ()
-main = print (pythag 50)
+main = print (pythag 15)

@@ -3,17 +3,25 @@ _idris-bash_
 
 GNU _bash_ backend for Idris.
 
-Based on Edwin Brady’s [PHP backend](https://github.com/edwinb/idris-php).
+Based on Edwin Brady’s [PHP backend](https://github.com/edwinb/idris-php), and my [toy JavaScript backend](https://github.com/mietek/idris-js).
 
-**Not functional.  Work in progress.**
+Barely functional.  Super slow.
 
 
 Example
 -------
 
     $ idris pythag.idr --codegen bash -o pythag.sh
-    $ bash pythag.sh
-    ...
+    $ time bash pythag.sh
+    [(3, (4, 5)), (6, (8, 10)), (5, (12, 13)), (9, (12, 15))]
+
+    real    0m14.717s
+    user    0m14.697s
+    sys     0m0.013s
+
+Input: [`pythag.idr`](pythag.idr)
+
+Output: [`pythag.sh`](https://gist.github.com/mietek/7fbb604d186042f613d3)
 
 
 About
