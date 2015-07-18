@@ -36,16 +36,32 @@ ftCase (SConstCase _ e)     = ftExp e
 ftCase (SConCase _ _ _ _ e) = ftExp e
 
 
-locCountBody :: SExp -> Int
-locCountBody (SV (Loc i))         = i + 1
-locCountBody (SLet (Loc i) e1 e2) = max (i + 1) (max (locCountBody e1) (locCountBody e2))
-locCountBody (SCase _ _ cs)       = maximum (map locCountCase cs)
-locCountBody (SChkCase _ cs)      = maximum (map locCountCase cs)
-locCountBody _                    = 0
+askTag :: TagMap -> Int -> Int
+askTag tm t = tm M.! t
 
 
-locCountCase :: SAlt -> Int
-locCountCase (SDefaultCase e)      = locCountBody e
-locCountCase (SConstCase _ e)      = locCountBody e
-locCountCase (SConCase _ _ _ [] e) = locCountBody e
-locCountCase (SConCase i _ _ ns e) = max (i + length ns) (locCountBody e)
+askTags :: TagMap -> [(Int, Int)]
+askTags tm = M.toAscList tm
+
+
+askTagCount :: TagMap -> Int
+askTagCount tm = M.size tm
+
+
+countLocs :: SDecl -> Int
+countLocs (SFun _ _ _ e) = clExp e
+
+
+clExp :: SExp -> Int
+clExp (SV (Loc i))         = i + 1
+clExp (SLet (Loc i) e1 e2) = max (i + 1) (max (clExp e1) (clExp e2))
+clExp (SCase _ _ cs)       = maximum (map clCase cs)
+clExp (SChkCase _ cs)      = maximum (map clCase cs)
+clExp _                    = 0
+
+
+clCase :: SAlt -> Int
+clCase (SDefaultCase e)      = clExp e
+clCase (SConstCase _ e)      = clExp e
+clCase (SConCase _ _ _ [] e) = clExp e
+clCase (SConCase i _ _ ns e) = max (i + length ns) (clExp e)
