@@ -18,23 +18,8 @@ codegenBash ci = do
     writeFile (outputFile ci) $
       prelude ++ "\n\n" ++
       cgTags tm ++ "\n\n" ++
-      concatMap (doCodegen tm) (simpleDecls ci) ++
+      concatMap (cgFun tm) (simpleDecls ci) ++
       name (sMN 0 "runMain") ++ "\n"
-
-
-cgTags :: TagMap -> String
-cgTags tm = showSep "\n" (map tag (askTags tm)) ++ "\n" ++
-            "_AP=" ++ show (askTagCount tm) ++ "\n"
-  where
-    tag (t, ap) = "_A[" ++ show ap ++ "]=" ++ show t
-
-
-doCodegen :: TagMap -> (Name, SDecl) -> String
-doCodegen tm (n, f@(SFun _ args _ e)) =
-    cgFun tm n argCount locCount e
-  where
-    argCount = length args
-    locCount = countLocs f
 
 
 name :: Name -> String
@@ -71,8 +56,15 @@ cgQPVar :: LVar -> String
 cgQPVar x = "\"" ++ cgPVar x ++ "\""
 
 
-cgFun :: TagMap -> Name -> Int -> Int -> SExp -> String
-cgFun tm n argCount locCount e =
+cgTags :: TagMap -> String
+cgTags tm = showSep "\n" (map tag (askTags tm)) ++ "\n" ++
+            "_AP=" ++ show (askTagCount tm) ++ "\n"
+  where
+    tag (t, ap) = "_A[" ++ show ap ++ "]=" ++ show t
+
+
+cgFun :: TagMap -> (Name, SDecl) -> String
+cgFun tm (n, f@(SFun _ args _ e)) =
     name n ++ " () {" ++ cr 1 ++
     pushFrame ++
     moveArgs ++
@@ -80,6 +72,8 @@ cgFun tm n argCount locCount e =
     cgBody tm 1 "_R" e ++
     popFrame ++ "\n}\n\n\n"
   where
+    argCount  = length args
+    locCount  = countLocs f
     frameSize = max argCount locCount
     pushFrame | frameSize == 0 = ""
               | otherwise      = "_PSP[_SR]=${_SP}; _SP=${_SQ}; _SR=$(( _SR + 1 ))" ++ cr 1
@@ -104,7 +98,7 @@ cgBody tm l r (SLet (Loc i) e1 e2) = cgBody tm l (cgLoc i) e1 ++ cr l ++
 -- cgBody tm l r (SUpdate _ e)
 -- cgBody tm l r (SProj v i)
 cgBody tm _ r (SCon _ t _ [])      = r ++ "=" ++ show (askTag tm t)
-cgBody _  l r (SCon _ t _ vs)      = makeArray l r (show t : map cgPVar vs)
+cgBody _  l r (SCon _ t _ vs)      = cgArray l r (show t : map cgPVar vs)
 cgBody tm l r (SCase _ v cs)       = cgSwitch tm l r v cs
 cgBody tm l r (SChkCase v cs)      = cgSwitch tm l r v cs
 cgBody _  _ r (SConst c)           = r ++ "=" ++ cgConst c
@@ -114,8 +108,13 @@ cgBody _  _ r SNothing             = r ++ "=0"
 cgBody _  _ _ x                    = error $ "Expression " ++ show x ++ " is not supported"
 
 
-makeArray :: Int -> String -> [String] -> String
-makeArray l r args =
+cgRet :: Int -> String -> String
+cgRet l r | r == "_R" = ""
+          | otherwise = cr l ++ r ++ "=${_R}"
+
+
+cgArray :: Int -> String -> [String] -> String
+cgArray l r args =
     makeElements ++
     r ++ "=${_AP}" ++
     -- cr l ++ "echo \"${_AP}\" " ++ showSep (" ") args ++
@@ -128,11 +127,6 @@ makeArray l r args =
     makeElement (i, arg) = "_A[_AP + " ++ show (i - 1) ++ "]=" ++ arg
     pushArray    | argCount == 0 = ""
                  | otherwise     = cr l ++ "_AP=$(( _AP + " ++ show argCount ++ " ))"
-
-
-cgRet :: Int -> String -> String
-cgRet l r | r == "_R" = ""
-          | otherwise = cr l ++ r ++ "=${_R}"
 
 
 cgSwitch :: TagMap -> Int -> String -> LVar -> [SAlt] -> String
