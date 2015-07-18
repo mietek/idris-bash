@@ -54,14 +54,6 @@ loc 0 = "_S[_SP]"
 loc i = "_S[_SP + " ++ show i ++ "]"
 
 
-ret :: String
-ret = "_R"
-
-
-dRet :: String
-dRet = "${" ++ ret ++ "}"
-
-
 var :: LVar -> String
 var (Loc i)  = loc i
 var (Glob n) = name n
@@ -81,7 +73,7 @@ cgFun tm n argCount locCount e =
     pushFrame ++
     moveArgs ++
     sizeFrame ++
-    cgBody tm 1 ret e ++
+    cgBody tm 1 "_R" e ++
     popFrame ++ "\n}\n\n\n"
   where
     frameSize = max argCount locCount
@@ -135,8 +127,8 @@ makeArray l r args =
 
 
 cgRet :: Int -> String -> String
-cgRet l r | r == ret  = ""
-          | otherwise = cr l ++ r ++ "=" ++ dRet
+cgRet l r | r == "_R" = ""
+          | otherwise = cr l ++ r ++ "=${_R}"
 
 
 cgSwitch :: TagMap -> Int -> String -> LVar -> [SAlt] -> String
