@@ -1,17 +1,15 @@
 module IRTS.CodegenBash (codegenBash) where
 
 import Data.Char
-import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as M
-import Data.List
 import IRTS.CodegenCommon
+import IRTS.CodegenUtils
 import IRTS.Lang
 import IRTS.Simplified
 import Idris.Core.TT
 
 import Paths_idris_bash
 
-type TagMap = IntMap Int
 
 codegenBash :: CodeGenerator
 codegenBash ci = do
@@ -24,25 +22,6 @@ codegenBash ci = do
       concatMap (doCodegen tm) (simpleDecls ci) ++
       name (sMN 0 "runMain") ++ "\n"
 
-findTags :: CodegenInfo -> TagMap
-findTags ci = M.fromAscList (zip ts [0..])
-  where
-    ts = nub (sort (concatMap ftFun (simpleDecls ci)))
-
-ftFun :: (Name, SDecl) -> [Int]
-ftFun (_, SFun _ _ _ e) = ftExp e
-
-ftExp :: SExp -> [Int]
-ftExp (SLet (Loc _) e1 e2) = ftExp e1 ++ ftExp e2
-ftExp (SCase _ _ cs)       = concatMap ftCase cs
-ftExp (SChkCase _ cs)      = concatMap ftCase cs
-ftExp (SCon _ t _ [])      = [t]
-ftExp _                    = []
-
-ftCase :: SAlt -> [Int]
-ftCase (SDefaultCase e)     = ftExp e
-ftCase (SConstCase _ e)     = ftExp e
-ftCase (SConCase _ _ _ _ e) = ftExp e
 
 cgTags :: TagMap -> String
 cgTags tm = showSep "\n" (map tag (M.toAscList tm)) ++ "\n" ++
@@ -50,9 +29,11 @@ cgTags tm = showSep "\n" (map tag (M.toAscList tm)) ++ "\n" ++
   where
     tag (t, ap) = "_A[" ++ show ap ++ "]=" ++ show t
 
+
 doCodegen :: TagMap -> (Name, SDecl) -> String
 doCodegen tm (n, SFun _ args _ e) =
     cgFun tm n (length args) e
+
 
 name :: Name -> String
 name n =
@@ -61,28 +42,36 @@ name n =
     char x | isAlpha x || isDigit x = [x]
            | otherwise              = "_" ++ show (fromEnum x) ++ "_"
 
+
 cr :: Int -> String
 cr l = "\n" ++ replicate l '\t'
+
 
 loc :: Int -> String
 loc 0 = "_S[_SP]"
 loc i = "_S[_SP + " ++ show i ++ "]"
 
+
 ret :: String
 ret = "_R"
 
+
 dRet :: String
 dRet = "${" ++ ret ++ "}"
+
 
 var :: LVar -> String
 var (Loc i)  = loc i
 var (Glob n) = name n
 
+
 dVar :: LVar -> String
 dVar x = "${" ++ var x ++ "}"
 
+
 qVar :: LVar -> String
 qVar x = "\"" ++ dVar x ++ "\""
+
 
 cgFun :: TagMap -> Name -> Int -> SExp -> String
 cgFun tm n argCount e =
@@ -105,18 +94,6 @@ cgFun tm n argCount e =
     popFrame  | frameSize == 0 = ""
               | otherwise      = cr 1 ++ "_SQ=${_SP}; _SR=$(( _SR - 1 )); _SP=${_PSP[_SR]}"
 
-locCountBody :: SExp -> Int
-locCountBody (SV (Loc i))         = i + 1
-locCountBody (SLet (Loc i) e1 e2) = max (i + 1) (max (locCountBody e1) (locCountBody e2))
-locCountBody (SCase _ _ cs)       = maximum (map locCountCase cs)
-locCountBody (SChkCase _ cs)      = maximum (map locCountCase cs)
-locCountBody _                    = 0
-
-locCountCase :: SAlt -> Int
-locCountCase (SDefaultCase e)      = locCountBody e
-locCountCase (SConstCase _ e)      = locCountBody e
-locCountCase (SConCase _ _ _ [] e) = locCountBody e
-locCountCase (SConCase i _ _ ns e) = max (i + length ns) (locCountBody e)
 
 cgBody :: TagMap -> Int -> String -> SExp -> String
 cgBody _  l r (SV (Glob f))        = name f ++
@@ -138,6 +115,7 @@ cgBody _  _ r SNothing             = r ++ "=0"
 -- cgBody tm l r (SError x)
 cgBody _  _ _ x                    = error $ "Expression " ++ show x ++ " is not supported"
 
+
 makeArray :: Int -> String -> [String] -> String
 makeArray l r args =
     makeElements ++
@@ -153,9 +131,11 @@ makeArray l r args =
     pushArray    | argCount == 0 = ""
                  | otherwise     = cr l ++ "_AP=$(( _AP + " ++ show argCount ++ " ))"
 
+
 cgRet :: Int -> String -> String
 cgRet l r | r == ret  = ""
           | otherwise = cr l ++ r ++ "=" ++ dRet
+
 
 cgSwitch :: TagMap -> Int -> String -> LVar -> [SAlt] -> String
 cgSwitch tm l r v cs =
@@ -168,6 +148,7 @@ cgSwitch tm l r v cs =
   where
     isConCase (SConCase _ _ _ _ _) = True
     isConCase _                    = False
+
 
 cgCase :: TagMap -> Int -> String -> LVar -> SAlt -> String
 cgCase tm l r _ (SDefaultCase e)        = "*)" ++ cr l ++
@@ -183,6 +164,7 @@ cgCase tm l r v (SConCase i0 t _ ns0 e) = show t ++ ")" ++ cr l ++
     project k i (_ : ns) = loc i ++ "=${_A[" ++ var v ++ " + " ++ show k ++ "]}" ++ cr l ++
                            project (k + 1) (i + 1) ns
 
+
 cgConst :: Const -> String
 cgConst (I i)             = show i
 cgConst (BI i)            = show i
@@ -191,6 +173,7 @@ cgConst (Str s)           = "'" ++ s ++ "'"
 cgConst TheWorld          = "0"
 cgConst x | isTypeConst x = "0"
           | otherwise     = error $ "Constant " ++ show x ++ " is not supported"
+
 
 cgOp :: String -> PrimFn -> [LVar] -> String
 cgOp r (LPlus  (ATInt _)) [n, m] = r ++ "=$(( " ++ var n ++ " + "  ++ var m ++ " ))"
