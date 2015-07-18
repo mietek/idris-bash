@@ -54,17 +54,21 @@ loc 0 = "_S[_SP]"
 loc i = "_S[_SP + " ++ show i ++ "]"
 
 
-var :: LVar -> String
-var (Loc i)  = loc i
-var (Glob n) = name n
+cgLoc :: Int -> String
+cgLoc i = loc i
 
 
-dVar :: LVar -> String
-dVar x = "${" ++ var x ++ "}"
+cgVar :: LVar -> String
+cgVar (Loc i) = loc i
+cgVar x       = error $ "Variable " ++ show x ++ " is not supported"
 
 
-qVar :: LVar -> String
-qVar x = "\"" ++ dVar x ++ "\""
+cgPVar :: LVar -> String
+cgPVar x = "${" ++ cgVar x ++ "}"
+
+
+cgQPVar :: LVar -> String
+cgQPVar x = "\"" ++ cgPVar x ++ "\""
 
 
 cgFun :: TagMap -> Name -> Int -> Int -> SExp -> String
@@ -92,15 +96,15 @@ cgFun tm n argCount locCount e =
 cgBody :: TagMap -> Int -> String -> SExp -> String
 cgBody _  l r (SV (Glob f))        = name f ++
                                      cgRet l r
-cgBody _  _ r (SV (Loc i))         = r ++ "=" ++ dVar (Loc i)
-cgBody _  l r (SApp _ f vs)        = name f ++ " " ++ showSep " " (map qVar vs) ++
+cgBody _  _ r (SV v@(Loc _))       = r ++ "=" ++ cgPVar v
+cgBody _  l r (SApp _ f vs)        = name f ++ " " ++ showSep " " (map cgQPVar vs) ++
                                      cgRet l r
-cgBody tm l r (SLet (Loc i) e1 e2) = cgBody tm l (loc i) e1 ++ cr l ++
+cgBody tm l r (SLet (Loc i) e1 e2) = cgBody tm l (cgLoc i) e1 ++ cr l ++
                                      cgBody tm l r e2
 -- cgBody tm l r (SUpdate _ e)
 -- cgBody tm l r (SProj v i)
 cgBody tm _ r (SCon _ t _ [])      = r ++ "=" ++ show (askTag tm t)
-cgBody _  l r (SCon _ t _ vs)      = makeArray l r (show t : map dVar vs)
+cgBody _  l r (SCon _ t _ vs)      = makeArray l r (show t : map cgPVar vs)
 cgBody tm l r (SCase _ v cs)       = cgSwitch tm l r v cs
 cgBody tm l r (SChkCase v cs)      = cgSwitch tm l r v cs
 cgBody _  _ r (SConst c)           = r ++ "=" ++ cgConst c
@@ -134,7 +138,7 @@ cgRet l r | r == "_R" = ""
 cgSwitch :: TagMap -> Int -> String -> LVar -> [SAlt] -> String
 cgSwitch tm l r v cs =
     let
-      v' = if any isConCase cs then "${_A[" ++ var v ++ "]}" else dVar v
+      v' = if any isConCase cs then "${_A[" ++ cgVar v ++ "]}" else cgPVar v
     in
       "case " ++ v' ++ " in" ++ cr l ++
       showSep (cr (l + 1) ++ ";;" ++ cr l) (map (cgCase tm (l + 1) r v) cs) ++ cr l ++
@@ -155,7 +159,7 @@ cgCase tm l r v (SConCase i0 t _ ns0 e) = show t ++ ")" ++ cr l ++
   where
     project :: Int -> Int -> [Name] -> String
     project _ _ []       = ""
-    project k i (_ : ns) = loc i ++ "=${_A[" ++ var v ++ " + " ++ show k ++ "]}" ++ cr l ++
+    project k i (_ : ns) = cgLoc i ++ "=${_A[" ++ cgVar v ++ " + " ++ show k ++ "]}" ++ cr l ++
                            project (k + 1) (i + 1) ns
 
 
@@ -170,9 +174,9 @@ cgConst x | isTypeConst x = "0"
 
 
 cgOp :: String -> PrimFn -> [LVar] -> String
-cgOp r (LPlus  (ATInt _)) [n, m] = r ++ "=$(( " ++ var n ++ " + "  ++ var m ++ " ))"
-cgOp r (LMinus (ATInt _)) [n, m] = r ++ "=$(( " ++ var n ++ " - "  ++ var m ++ " ))"
-cgOp r (LTimes (ATInt _)) [n, m] = r ++ "=$(( " ++ var n ++ " * "  ++ var m ++ " ))"
+cgOp r (LPlus  (ATInt _)) [n, m] = r ++ "=$(( " ++ cgVar n ++ " + "  ++ cgVar m ++ " ))"
+cgOp r (LMinus (ATInt _)) [n, m] = r ++ "=$(( " ++ cgVar n ++ " - "  ++ cgVar m ++ " ))"
+cgOp r (LTimes (ATInt _)) [n, m] = r ++ "=$(( " ++ cgVar n ++ " * "  ++ cgVar m ++ " ))"
 -- cgOp r LUDiv
 -- cgOp r LSDiv
 -- cgOp r LURem
@@ -184,25 +188,25 @@ cgOp r (LTimes (ATInt _)) [n, m] = r ++ "=$(( " ++ var n ++ " * "  ++ var m ++ "
 -- cgOp r LSHL
 -- cgOp r LLSHR
 -- cgOp r LASHR
-cgOp r (LEq    (ATInt _)) [n, m] = r ++ "=$(( " ++ var n ++ " == " ++ var m ++ " ))"
+cgOp r (LEq    (ATInt _)) [n, m] = r ++ "=$(( " ++ cgVar n ++ " == " ++ cgVar m ++ " ))"
 -- cgOp r LLt
 -- cgOp r LLe
 -- cgOp r LGt
 -- cgOp r LGe
-cgOp r (LSLt   (ATInt _)) [n, m] = r ++ "=$(( " ++ var n ++ " < "  ++ var m ++ " ))"
-cgOp r (LSLe   (ATInt _)) [n, m] = r ++ "=$(( " ++ var n ++ " <= " ++ var m ++ " ))"
-cgOp r (LSGt   (ATInt _)) [n, m] = r ++ "=$(( " ++ var n ++ " > "  ++ var m ++ " ))"
-cgOp r (LSGe   (ATInt _)) [n, m] = r ++ "=$(( " ++ var n ++ " >= " ++ var m ++ " ))"
-cgOp r (LSExt _ _)        [n]    = r ++ "=" ++ dVar n
+cgOp r (LSLt   (ATInt _)) [n, m] = r ++ "=$(( " ++ cgVar n ++ " < "  ++ cgVar m ++ " ))"
+cgOp r (LSLe   (ATInt _)) [n, m] = r ++ "=$(( " ++ cgVar n ++ " <= " ++ cgVar m ++ " ))"
+cgOp r (LSGt   (ATInt _)) [n, m] = r ++ "=$(( " ++ cgVar n ++ " > "  ++ cgVar m ++ " ))"
+cgOp r (LSGe   (ATInt _)) [n, m] = r ++ "=$(( " ++ cgVar n ++ " >= " ++ cgVar m ++ " ))"
+cgOp r (LSExt _ _)        [n]    = r ++ "=" ++ cgPVar n
 -- cgOp r LZExt
 -- cgOp r LTrunc
-cgOp r LStrConcat         [s, t] = r ++ "=" ++ dVar s ++ dVar t
+cgOp r LStrConcat         [s, t] = r ++ "=" ++ cgPVar s ++ cgPVar t
 -- cgOp r LStrLt
 -- cgOp r LStrEq
-cgOp r LStrLen            [s]    = r ++ "=${#" ++  var s ++ "}"
+cgOp r LStrLen            [s]    = r ++ "=${#" ++  cgVar s ++ "}"
 -- cgOp r LIntFloat
 -- cgOp r LFloatInt
-cgOp r (LIntStr _)        [n]    = r ++ "=" ++ dVar n
+cgOp r (LIntStr _)        [n]    = r ++ "=" ++ cgPVar n
 -- cgOp r LStrInt
 -- cgOp r LFloatStr
 -- cgOp r LStrFloat
@@ -221,13 +225,13 @@ cgOp r (LIntStr _)        [n]    = r ++ "=" ++ dVar n
 -- cgOp r LFFloor
 -- cgOp r LFCeil
 -- cgOp r LFNegate
-cgOp r LStrHead           [s]    = r ++ "=${" ++ var s ++ ":0:1}"
-cgOp r LStrTail           [s]    = r ++ "=${" ++ var s ++ ":1}"
-cgOp r LStrCons           [c, s] = r ++ "=" ++ dVar c ++ dVar s
-cgOp r LStrIndex          [s, n] = r ++ "=${" ++ var s ++ ":" ++ dVar n ++ ":1}"
+cgOp r LStrHead           [s]    = r ++ "=${" ++ cgVar s ++ ":0:1}"
+cgOp r LStrTail           [s]    = r ++ "=${" ++ cgVar s ++ ":1}"
+cgOp r LStrCons           [c, s] = r ++ "=" ++ cgPVar c ++ cgPVar s
+cgOp r LStrIndex          [s, n] = r ++ "=${" ++ cgVar s ++ ":" ++ cgPVar n ++ ":1}"
 -- cgOp r LStrRev
 -- cgOp r LReadStr
-cgOp _ LWriteStr          [_, s] = "echo " ++ qVar s
+cgOp _ LWriteStr          [_, s] = "echo " ++ cgQPVar s
 -- cgOp r LSystemInfo
 -- cgOp r LFork
 -- cgOp r LPar
