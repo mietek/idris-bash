@@ -4,6 +4,8 @@ module IRTS.Codegen.ReaderEmitter
   , askTags
   , askTagCount
   , askTag
+  , askRetTarget
+  , withRetTarget
   , emit
   , nest
   , skip
@@ -19,8 +21,9 @@ import IRTS.Codegen.Utils
 
 
 data EmitterInfo = EI
-  { eiPrelude      :: String
-  , eiTagMap       :: TagMap
+  { eiPrelude   :: String
+  , eiTagMap    :: TagMap
+  , eiRetTarget :: String
   }
 
 type EmitterM a = ReaderT EmitterInfo E.EmitterM a
@@ -46,6 +49,12 @@ askTag t = do
     tm <- askTagMap
     return $ tm M.! t
 
+askRetTarget :: EmitterM String
+askRetTarget = fmap eiRetTarget ask
+
+withRetTarget :: String -> Emitter -> Emitter
+withRetTarget at e = local (\ei -> ei { eiRetTarget = at }) e
+
 
 type Emitter = EmitterM ()
 
@@ -67,4 +76,4 @@ collect :: String -> CodegenInfo -> Emitter -> String
 collect prelude ci e = E.collect (runEmitter ei e)
   where
     tm = findTags ci
-    ei = EI prelude tm
+    ei = EI prelude tm ""

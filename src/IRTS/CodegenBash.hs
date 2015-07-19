@@ -53,7 +53,8 @@ emitFunDef (n, f@(SFun _ args _ e)) = do
       emitPushFrame fs
       mapM_ emitMoveArg [1..ac]
       emitSizeFrame fs
-      emitExp "_R" e
+      withRetTarget "_R" $
+        emitExp e
       emitPopFrame fs
     emit "}"
     emit ""
@@ -80,40 +81,48 @@ emitPopFrame 0 = skip
 emitPopFrame _ = emit $ "_SQ=${_SP}; _SR=$(( _SR - 1 )); _SP=${_PSP[_SR]}"
 
 
-emitExp :: String -> SExp -> Emitter
-emitExp r (SV (Glob f))        = emitFunCall r f []
-emitExp r (SV v@(Loc _))       = emit $ r ++ "=" ++ showParamVar v
-emitExp r (SApp _ f vs)        = emitFunCall r f vs
-emitExp r (SLet (Loc i) e1 e2) = do
-    emitExp (showLoc i) e1
-    emitExp r e2
--- emitExp r (SUpdate _ e)
--- emitExp r (SProj v i)
-emitExp r (SCon _ t _ []) = do
+emitExp :: SExp -> Emitter
+emitExp (SV (Glob f))        = emitFunCall f []
+emitExp (SV v@(Loc _))       = emitRet $ showParamVar v
+emitExp (SApp _ f vs)        = emitFunCall f vs
+emitExp (SLet (Loc i) e1 e2) = do
+    withRetTarget (showLoc i) $
+      emitExp e1
+    emitExp e2
+-- emitExp (SUpdate _ e)
+-- emitExp (SProj v i)
+emitExp (SCon _ t _ []) = do
     t' <- askTag t
-    emit $ r ++ "=" ++ show t'
-emitExp r (SCon _ t _ vs)      = emitArray r (show t : map showParamVar vs)
-emitExp r (SCase _ v cs)       = emitSwitch r v cs
-emitExp r (SChkCase v cs)      = emitSwitch r v cs
-emitExp r (SConst c)           = emit $ r ++ "=" ++ showConst c
-emitExp r (SOp o vs)           = emit $ showOp r o vs
-emitExp r SNothing             = emit $ r ++ "=0"
--- emitExp  r (SError x)
-emitExp _ x                    = error $ "Expression " ++ show x ++ " is not supported"
+    emitRet $ show t'
+emitExp (SCon _ t _ vs)      = emitArray (show t : map showParamVar vs)
+emitExp (SCase _ v cs)       = emitSwitch v cs
+emitExp (SChkCase v cs)      = emitSwitch v cs
+emitExp (SConst c)           = emitRet $ showConst c
+emitExp (SOp o vs)           = emitOp o vs
+emitExp SNothing             = emitRet "0"
+-- emitExp (SError x)
+emitExp x                    = error $ "Expression " ++ show x ++ " is not supported"
 
 
-emitFunCall :: String -> Name -> [LVar] -> Emitter
-emitFunCall r f vs = do
+emitRet :: String -> Emitter
+emitRet s = do
+    rt <- askRetTarget
+    emit $ rt ++ "=" ++ s
+
+
+emitFunCall :: Name -> [LVar] -> Emitter
+emitFunCall f vs = do
+    rt <- askRetTarget
     emit $ showSep " " (showName f : map showQuotedParamVar vs)
-    if r == "_R"
+    if rt == "_R"
       then skip
-      else emit $ r ++ "=${_R}"
+      else emit $ rt ++ "=${_R}"
 
 
-emitArray :: String -> [String] -> Emitter
-emitArray r args = do
+emitArray :: [String] -> Emitter
+emitArray args = do
     mapM_ emitArrayElement (zip [0..] args)
-    emit $ r ++ "=${_AP}"
+    emitRet "${_AP}"
     emitPushArray ac
   where
     ac = length args
@@ -127,32 +136,32 @@ emitPushArray 0  = skip
 emitPushArray ac = emit $ "_AP=$(( _AP + " ++ show ac ++ " ))"
 
 
-emitSwitch :: String -> LVar -> [SAlt] -> Emitter
-emitSwitch r v cs = do
+emitSwitch :: LVar -> [SAlt] -> Emitter
+emitSwitch v cs = do
     let v' = if any isConCase cs then "${_A[" ++ showVar v ++ "]}" else showParamVar v
     emit $ "case " ++ v' ++ " in"
     sequence_ $
       intersperse (nest $ emit ";;") $
-        map (emitCase r v) cs
+        map (emitCase v) cs
     emit "esac"
   where
     isConCase (SConCase _ _ _ _ _) = True
     isConCase _                    = False
 
-emitCase :: String -> LVar -> SAlt -> Emitter
-emitCase r _ (SDefaultCase e) = do
+emitCase :: LVar -> SAlt -> Emitter
+emitCase _ (SDefaultCase e) = do
     emit "*)"
     nest $
-      emitExp r e
-emitCase r _ (SConstCase t e) = do
+      emitExp e
+emitCase _ (SConstCase t e) = do
     emit $ show t ++ ")"
     nest $
-      emitExp r e
-emitCase r v (SConCase i0 t _ ns0 e) = do
+      emitExp e
+emitCase v (SConCase i0 t _ ns0 e) = do
     emit $ show t ++ ")"
     nest $ do
       emitCaseElement i0 ns0
-      emitExp r e
+      emitExp e
   where
     emitCaseElement :: Int -> [Name] -> Emitter
     emitCaseElement _ []       = skip
@@ -194,69 +203,69 @@ showConst x | isTypeConst x = "0"
             | otherwise     = error $ "Constant " ++ show x ++ " is not supported"
 
 
-showOp :: String -> PrimFn -> [LVar] -> String
-showOp r (LPlus  (ATInt _)) [n, m] = r ++ "=$(( " ++ showVar n ++ " + "  ++ showVar m ++ " ))"
-showOp r (LMinus (ATInt _)) [n, m] = r ++ "=$(( " ++ showVar n ++ " - "  ++ showVar m ++ " ))"
-showOp r (LTimes (ATInt _)) [n, m] = r ++ "=$(( " ++ showVar n ++ " * "  ++ showVar m ++ " ))"
--- showOp r LUDiv
--- showOp r LSDiv
--- showOp r LURem
--- showOp r LSRem
--- showOp r LAnd
--- showOp r LOr
--- showOp r LXOr
--- showOp r LCompl
--- showOp r LSHL
--- showOp r LLSHR
--- showOp r LASHR
-showOp r (LEq    (ATInt _)) [n, m] = r ++ "=$(( " ++ showVar n ++ " == " ++ showVar m ++ " ))"
--- showOp r LLt
--- showOp r LLe
--- showOp r LGt
--- showOp r LGe
-showOp r (LSLt   (ATInt _)) [n, m] = r ++ "=$(( " ++ showVar n ++ " < "  ++ showVar m ++ " ))"
-showOp r (LSLe   (ATInt _)) [n, m] = r ++ "=$(( " ++ showVar n ++ " <= " ++ showVar m ++ " ))"
-showOp r (LSGt   (ATInt _)) [n, m] = r ++ "=$(( " ++ showVar n ++ " > "  ++ showVar m ++ " ))"
-showOp r (LSGe   (ATInt _)) [n, m] = r ++ "=$(( " ++ showVar n ++ " >= " ++ showVar m ++ " ))"
-showOp r (LSExt _ _)        [n]    = r ++ "=" ++ showParamVar n
--- showOp r LZExt
--- showOp r LTrunc
-showOp r LStrConcat         [s, t] = r ++ "=" ++ showParamVar s ++ showParamVar t
--- showOp r LStrLt
--- showOp r LStrEq
-showOp r LStrLen            [s]    = r ++ "=${#" ++  showVar s ++ "}"
--- showOp r LIntFloat
--- showOp r LFloatInt
-showOp r (LIntStr _)        [n]    = r ++ "=" ++ showParamVar n
--- showOp r LStrInt
--- showOp r LFloatStr
--- showOp r LStrFloat
--- showOp r LChInt
--- showOp r LIntCh
--- showOp r LBitCast
--- showOp r LFExp
--- showOp r LFLog
--- showOp r LFSin
--- showOp r LFCos
--- showOp r LFTan
--- showOp r LFASin
--- showOp r LFACos
--- showOp r LFATan
--- showOp r LFSqrt
--- showOp r LFFloor
--- showOp r LFCeil
--- showOp r LFNegate
-showOp r LStrHead           [s]    = r ++ "=${" ++ showVar s ++ ":0:1}"
-showOp r LStrTail           [s]    = r ++ "=${" ++ showVar s ++ ":1}"
-showOp r LStrCons           [c, s] = r ++ "=" ++ showParamVar c ++ showParamVar s
-showOp r LStrIndex          [s, n] = r ++ "=${" ++ showVar s ++ ":" ++ showParamVar n ++ ":1}"
--- showOp r LStrRev
--- showOp r LReadStr
-showOp _ LWriteStr          [_, s] = "echo " ++ showQuotedParamVar s
--- showOp r LSystemInfo
--- showOp r LFork
--- showOp r LPar
--- showOp r LExternal
--- showOp r LNoOp
--- showOp _ o _                       = error $ "Operator " ++ show o ++ " is not supported"
-showOp _ o _                       = "echo 'Operator " ++ show o ++ " is not supported' >&2"
+emitOp :: PrimFn -> [LVar] -> Emitter
+emitOp (LPlus  (ATInt _)) [n, m] = emitRet $ "$(( " ++ showVar n ++ " + "  ++ showVar m ++ " ))"
+emitOp (LMinus (ATInt _)) [n, m] = emitRet $ "$(( " ++ showVar n ++ " - "  ++ showVar m ++ " ))"
+emitOp (LTimes (ATInt _)) [n, m] = emitRet $ "$(( " ++ showVar n ++ " * "  ++ showVar m ++ " ))"
+-- emitOp LUDiv
+-- emitOp LSDiv
+-- emitOp LURem
+-- emitOp LSRem
+-- emitOp LAnd
+-- emitOp LOr
+-- emitOp LXOr
+-- emitOp LCompl
+-- emitOp LSHL
+-- emitOp LLSHR
+-- emitOp LASHR
+emitOp (LEq    (ATInt _)) [n, m] = emitRet $ "$(( " ++ showVar n ++ " == " ++ showVar m ++ " ))"
+-- emitOp LLt
+-- emitOp LLe
+-- emitOp LGt
+-- emitOp LGe
+emitOp (LSLt   (ATInt _)) [n, m] = emitRet $ "$(( " ++ showVar n ++ " < "  ++ showVar m ++ " ))"
+emitOp (LSLe   (ATInt _)) [n, m] = emitRet $ "$(( " ++ showVar n ++ " <= " ++ showVar m ++ " ))"
+emitOp (LSGt   (ATInt _)) [n, m] = emitRet $ "$(( " ++ showVar n ++ " > "  ++ showVar m ++ " ))"
+emitOp (LSGe   (ATInt _)) [n, m] = emitRet $ "$(( " ++ showVar n ++ " >= " ++ showVar m ++ " ))"
+emitOp (LSExt _ _)        [n]    = emitRet $ showParamVar n
+-- emitOp LZExt
+-- emitOp LTrunc
+emitOp LStrConcat         [s, t] = emitRet $ showParamVar s ++ showParamVar t
+-- emitOp LStrLt
+-- emitOp LStrEq
+emitOp LStrLen            [s]    = emitRet $ "${#" ++ showVar s ++ "}"
+-- emitOp LIntFloat
+-- emitOp LFloatInt
+emitOp (LIntStr _)        [n]    = emitRet $ showParamVar n
+-- emitOp LStrInt
+-- emitOp LFloatStr
+-- emitOp LStrFloat
+-- emitOp LChInt
+-- emitOp LIntCh
+-- emitOp LBitCast
+-- emitOp LFExp
+-- emitOp LFLog
+-- emitOp LFSin
+-- emitOp LFCos
+-- emitOp LFTan
+-- emitOp LFASin
+-- emitOp LFACos
+-- emitOp LFATan
+-- emitOp LFSqrt
+-- emitOp LFFloor
+-- emitOp LFCeil
+-- emitOp LFNegate
+emitOp LStrHead           [s]    = emitRet $ "${" ++ showVar s ++ ":0:1}"
+emitOp LStrTail           [s]    = emitRet $ "${" ++ showVar s ++ ":1}"
+emitOp LStrCons           [c, s] = emitRet $ showParamVar c ++ showParamVar s
+emitOp LStrIndex          [s, n] = emitRet $ "${" ++ showVar s ++ ":" ++ showParamVar n ++ ":1}"
+-- emitOp LStrRev
+-- emitOp LReadStr
+emitOp LWriteStr          [_, s] = emit $ "echo " ++ showQuotedParamVar s
+-- emitOp LSystemInfo
+-- emitOp LFork
+-- emitOp LPar
+-- emitOp LExternal
+-- emitOp LNoOp
+-- emitOp o _                       = error $ "Operator " ++ show o ++ " is not supported"
+emitOp o _                       = emit $ "echo 'Operator " ++ show o ++ " is not supported' >&2"
