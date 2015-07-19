@@ -3,8 +3,8 @@ module IRTS.CodegenBash (codegenBash) where
 import Data.Char
 import Data.List
 import IRTS.CodegenCommon
-import IRTS.CodegenEmitter
-import IRTS.CodegenUtils
+import IRTS.Codegen.Emitter
+import IRTS.Codegen.Utils
 import IRTS.Lang
 import IRTS.Simplified
 import Idris.Core.TT

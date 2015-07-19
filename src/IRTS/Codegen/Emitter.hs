@@ -3,7 +3,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeSynonymInstances #-}
 
-module IRTS.CodegenEmitter
+module IRTS.Codegen.Emitter
   ( emit
   , nest
   , skip

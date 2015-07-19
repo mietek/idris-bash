@@ -1,4 +1,4 @@
-module IRTS.CodegenUtils where
+module IRTS.Codegen.Utils where
 
 import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as M
