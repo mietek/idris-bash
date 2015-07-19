@@ -1,7 +1,9 @@
 module IRTS.CodegenBash (codegenBash) where
 
 import Data.Char
+import Data.List
 import IRTS.CodegenCommon
+import IRTS.CodegenEmitter
 import IRTS.CodegenUtils
 import IRTS.Lang
 import IRTS.Simplified
@@ -14,12 +16,16 @@ codegenBash :: CodeGenerator
 codegenBash ci = do
     preludeName <- getDataFileName "prelude.sh"
     prelude <- readFile preludeName
-    let tm = findTags ci
-    writeFile (outputFile ci) $
-      prelude ++ "\n\n" ++
-      cgTags tm ++ "\n\n" ++
-      concatMap (cgFun tm) (simpleDecls ci) ++
-      name (sMN 0 "runMain") ++ "\n"
+    let outputName = outputFile ci
+        tm = findTags ci
+        fs = simpleDecls ci
+        output = collect $ do
+            emit prelude
+            emit ""
+            cgTags tm
+            mapM_ (cgFun tm) fs
+            emit $ name (sMN 0 "runMain")
+    writeFile outputName output
 
 
 name :: Name -> String
@@ -30,17 +36,9 @@ name n =
            | otherwise              = "_" ++ show (fromEnum x) ++ "_"
 
 
-cr :: Int -> String
-cr l = "\n" ++ replicate l '\t'
-
-
 loc :: Int -> String
 loc 0 = "_S[_SP]"
 loc i = "_S[_SP + " ++ show i ++ "]"
-
-
-cgLoc :: Int -> String
-cgLoc i = loc i
 
 
 cgVar :: LVar -> String
@@ -56,105 +54,140 @@ cgQPVar :: LVar -> String
 cgQPVar x = "\"" ++ cgPVar x ++ "\""
 
 
-cgTags :: TagMap -> String
-cgTags tm = showSep "\n" (map tag (askTags tm)) ++ "\n" ++
-            "_AP=" ++ show (askTagCount tm) ++ "\n"
+cgTags :: TagMap -> Emitter
+cgTags tm = do
+    mapM_ cgTag (askTags tm)
+    emit $ "_AP=" ++ show (askTagCount tm)
+    emit ""
+    emit ""
+
+
+cgTag :: (Int, Int) -> Emitter
+cgTag (t, i) =
+    emit $ "_A[" ++ show i ++ "]=" ++ show t
+
+
+cgFun :: TagMap -> (Name, SDecl) -> Emitter
+cgFun tm (n, f@(SFun _ args _ e)) = do
+    emit $ name n ++ " () {"
+    nest $ do
+      cgPushFrame fs
+      mapM_ cgMoveArg [1..ac]
+      cgSizeFrame fs
+      cgBody tm "_R" e
+      cgPopFrame fs
+    emit "}"
+    emit ""
+    emit ""
   where
-    tag (t, ap) = "_A[" ++ show ap ++ "]=" ++ show t
+    ac = length args
+    lc = countLocs f
+    fs = max ac lc
 
 
-cgFun :: TagMap -> (Name, SDecl) -> String
-cgFun tm (n, f@(SFun _ args _ e)) =
-    name n ++ " () {" ++ cr 1 ++
-    pushFrame ++
-    moveArgs ++
-    sizeFrame ++
-    cgBody tm 1 "_R" e ++
-    popFrame ++ "\n}\n\n\n"
+cgPushFrame :: Int -> Emitter
+cgPushFrame 0 = skip
+cgPushFrame _ = emit $ "_PSP[_SR]=${_SP}; _SP=${_SQ}; _SR=$(( _SR + 1 ))"
+
+
+cgMoveArg :: Int -> Emitter
+cgMoveArg 1 = emit $ "_S[_SP]=$1"
+cgMoveArg i = emit $ "_S[_SP + " ++ show (i - 1) ++ "]=$" ++ show i
+
+
+cgSizeFrame :: Int -> Emitter
+cgSizeFrame 0  = skip
+cgSizeFrame fs = emit $ "_SQ=$(( _SP + " ++ show fs ++ " ))"
+
+
+cgPopFrame :: Int -> Emitter
+cgPopFrame 0 = skip
+cgPopFrame _ = emit $ "_SQ=${_SP}; _SR=$(( _SR - 1 )); _SP=${_PSP[_SR]}"
+
+
+cgBody :: TagMap -> String -> SExp -> Emitter
+cgBody _  r (SV (Glob f))        = cgFunCall r f []
+cgBody _  r (SV v@(Loc _))       = emit $ r ++ "=" ++ cgPVar v
+cgBody _  r (SApp _ f vs)        = cgFunCall r f vs
+cgBody tm r (SLet (Loc i) e1 e2) = do
+    cgBody tm (loc i) e1
+    cgBody tm r e2
+-- cgBody tm r (SUpdate _ e)
+-- cgBody tm r (SProj v i)
+cgBody tm r (SCon _ t _ [])      = emit $ r ++ "=" ++ show (askTag tm t)
+cgBody _  r (SCon _ t _ vs)      = cgArray r (show t : map cgPVar vs)
+cgBody tm r (SCase _ v cs)       = cgSwitch tm r v cs
+cgBody tm r (SChkCase v cs)      = cgSwitch tm r v cs
+cgBody _  r (SConst c)           = emit $ r ++ "=" ++ cgConst c
+cgBody _  r (SOp o vs)           = emit $ cgOp r o vs
+cgBody _  r SNothing             = emit $ r ++ "=0"
+-- cgBody tm r (SError x)
+cgBody _  _ x                    = error $ "Expression " ++ show x ++ " is not supported"
+
+
+cgFunCall :: String -> Name -> [LVar] -> Emitter
+cgFunCall r f vs = do
+    emit $ showSep " " (name f : map cgQPVar vs)
+    cgFunRet r
+
+
+cgFunRet :: String -> Emitter
+cgFunRet "_R" = skip
+cgFunRet r    = emit $ r ++ "=${_R}"
+
+
+cgArray :: String -> [String] -> Emitter
+cgArray r args = do
+    mapM_ cgArrayElement (zip [0..] args)
+    emit $ r ++ "=${_AP}"
+    cgPushArray ac
   where
-    argCount  = length args
-    locCount  = countLocs f
-    frameSize = max argCount locCount
-    pushFrame | frameSize == 0 = ""
-              | otherwise      = "_PSP[_SR]=${_SP}; _SP=${_SQ}; _SR=$(( _SR + 1 ))" ++ cr 1
-    moveArgs  | argCount == 0  = ""
-              | otherwise      = showSep (cr 1) (map moveArg [1..argCount]) ++ cr 1
-    moveArg 1 = "_S[_SP]=$1"
-    moveArg i = "_S[_SP + " ++ show (i - 1) ++ "]=$" ++ show i
-    sizeFrame | frameSize == 0 = ""
-              | otherwise      = "_SQ=$(( _SP + " ++ show frameSize ++ " ))" ++ cr 1
-    popFrame  | frameSize == 0 = ""
-              | otherwise      = cr 1 ++ "_SQ=${_SP}; _SR=$(( _SR - 1 )); _SP=${_PSP[_SR]}"
+    ac = length args
 
 
-cgBody :: TagMap -> Int -> String -> SExp -> String
-cgBody _  l r (SV (Glob f))        = name f ++
-                                     cgRet l r
-cgBody _  _ r (SV v@(Loc _))       = r ++ "=" ++ cgPVar v
-cgBody _  l r (SApp _ f vs)        = name f ++ " " ++ showSep " " (map cgQPVar vs) ++
-                                     cgRet l r
-cgBody tm l r (SLet (Loc i) e1 e2) = cgBody tm l (cgLoc i) e1 ++ cr l ++
-                                     cgBody tm l r e2
--- cgBody tm l r (SUpdate _ e)
--- cgBody tm l r (SProj v i)
-cgBody tm _ r (SCon _ t _ [])      = r ++ "=" ++ show (askTag tm t)
-cgBody _  l r (SCon _ t _ vs)      = cgArray l r (show t : map cgPVar vs)
-cgBody tm l r (SCase _ v cs)       = cgSwitch tm l r v cs
-cgBody tm l r (SChkCase v cs)      = cgSwitch tm l r v cs
-cgBody _  _ r (SConst c)           = r ++ "=" ++ cgConst c
-cgBody _  _ r (SOp o vs)           = cgOp r o vs
-cgBody _  _ r SNothing             = r ++ "=0"
--- cgBody tm l r (SError x)
-cgBody _  _ _ x                    = error $ "Expression " ++ show x ++ " is not supported"
+cgArrayElement :: (Int, String) -> Emitter
+cgArrayElement (0, arg) = emit $ "_A[_AP]=" ++ arg
+cgArrayElement (i, arg) = emit $ "_A[_AP + " ++ show i ++ "]=" ++ arg
 
 
-cgRet :: Int -> String -> String
-cgRet l r | r == "_R" = ""
-          | otherwise = cr l ++ r ++ "=${_R}"
+cgPushArray :: Int -> Emitter
+cgPushArray 0  = skip
+cgPushArray ac = emit $ "_AP=$(( _AP + " ++ show ac ++ " ))"
 
 
-cgArray :: Int -> String -> [String] -> String
-cgArray l r args =
-    makeElements ++
-    r ++ "=${_AP}" ++
-    -- cr l ++ "echo \"${_AP}\" " ++ showSep (" ") args ++
-    pushArray
-  where
-    argCount = length args
-    makeElements | argCount == 0 = ""
-                 | otherwise     = showSep (cr l) (map makeElement (zip [1..argCount] args)) ++ cr l
-    makeElement (1, arg) = "_A[_AP]=" ++ arg
-    makeElement (i, arg) = "_A[_AP + " ++ show (i - 1) ++ "]=" ++ arg
-    pushArray    | argCount == 0 = ""
-                 | otherwise     = cr l ++ "_AP=$(( _AP + " ++ show argCount ++ " ))"
-
-
-cgSwitch :: TagMap -> Int -> String -> LVar -> [SAlt] -> String
-cgSwitch tm l r v cs =
-    let
-      v' = if any isConCase cs then "${_A[" ++ cgVar v ++ "]}" else cgPVar v
-    in
-      "case " ++ v' ++ " in" ++ cr l ++
-      showSep (cr (l + 1) ++ ";;" ++ cr l) (map (cgCase tm (l + 1) r v) cs) ++ cr l ++
-      "esac"
+cgSwitch :: TagMap -> String -> LVar -> [SAlt] -> Emitter
+cgSwitch tm r v cs = do
+    let v' = if any isConCase cs then "${_A[" ++ cgVar v ++ "]}" else cgPVar v
+    emit $ "case " ++ v' ++ " in"
+    sequence_ $
+      intersperse (nest $ emit ";;") $
+        map (cgCase tm r v) cs
+    emit "esac"
   where
     isConCase (SConCase _ _ _ _ _) = True
     isConCase _                    = False
 
 
-cgCase :: TagMap -> Int -> String -> LVar -> SAlt -> String
-cgCase tm l r _ (SDefaultCase e)        = "*)" ++ cr l ++
-                                          cgBody tm l r e
-cgCase tm l r _ (SConstCase t e)        = show t ++ ")" ++ cr l ++
-                                          cgBody tm l r e
-cgCase tm l r v (SConCase i0 t _ ns0 e) = show t ++ ")" ++ cr l ++
-                                          project 1 i0 ns0 ++
-                                          cgBody tm l r e
+cgCase :: TagMap -> String -> LVar -> SAlt -> Emitter
+cgCase tm r _ (SDefaultCase e) = do
+    emit "*)"
+    nest $
+      cgBody tm r e
+cgCase tm r _ (SConstCase t e) = do
+    emit $ show t ++ ")"
+    nest $
+      cgBody tm r e
+cgCase tm r v (SConCase i0 t _ ns0 e) = do
+    emit $ show t ++ ")"
+    nest $ do
+      cgCaseElement i0 ns0
+      cgBody tm r e
   where
-    project :: Int -> Int -> [Name] -> String
-    project _ _ []       = ""
-    project k i (_ : ns) = cgLoc i ++ "=${_A[" ++ cgVar v ++ " + " ++ show k ++ "]}" ++ cr l ++
-                           project (k + 1) (i + 1) ns
+    cgCaseElement :: Int -> [Name] -> Emitter
+    cgCaseElement _ []       = skip
+    cgCaseElement i (_ : ns) = do
+        emit $ loc i ++ "=${_A[" ++ cgVar v ++ " + " ++ show (i - i0 + 1) ++ "]}"
+        cgCaseElement (i + 1) ns
 
 
 cgConst :: Const -> String
