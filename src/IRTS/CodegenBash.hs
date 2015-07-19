@@ -3,7 +3,7 @@ module IRTS.CodegenBash (codegenBash) where
 import Data.Char
 import Data.List
 import IRTS.CodegenCommon
-import IRTS.Codegen.Emitter
+import IRTS.Codegen.ReaderEmitter
 import IRTS.Codegen.Utils
 import IRTS.Lang
 import IRTS.Simplified
@@ -16,26 +16,28 @@ codegenBash :: CodeGenerator
 codegenBash ci = do
     preludePath <- getDataFileName "prelude.sh"
     prelude <- readFile preludePath
-    let tm = findTags ci
-        fs = simpleDecls ci
+    let fs = simpleDecls ci
         outputPath = outputFile ci
-        output = collect $ emitProgram prelude tm fs
+        output = collect prelude ci $ emitProgram fs
     writeFile outputPath output
 
 
-emitProgram :: String -> TagMap -> [(Name, SDecl)] -> Emitter
-emitProgram prelude tm fs = do
+emitProgram :: [(Name, SDecl)] -> Emitter
+emitProgram fs = do
+    prelude <- askPrelude
     emit prelude
     emit ""
-    emitTagDefs tm
-    mapM_ (emitFunDef tm) fs
+    emitTagDefs
+    mapM_ emitFunDef fs
     emit $ showName (sMN 0 "runMain")
 
 
-emitTagDefs :: TagMap -> Emitter
-emitTagDefs tm = do
-    mapM_ emitTagDef (askTags tm)
-    emit $ "_AP=" ++ show (askTagCount tm)
+emitTagDefs :: Emitter
+emitTagDefs = do
+    ts <- askTags
+    tc <- askTagCount
+    mapM_ emitTagDef ts
+    emit $ "_AP=" ++ show tc
     emit ""
     emit ""
 
@@ -44,14 +46,14 @@ emitTagDef (t, i) =
     emit $ "_A[" ++ show i ++ "]=" ++ show t
 
 
-emitFunDef :: TagMap -> (Name, SDecl) -> Emitter
-emitFunDef tm (n, f@(SFun _ args _ e)) = do
+emitFunDef :: (Name, SDecl) -> Emitter
+emitFunDef (n, f@(SFun _ args _ e)) = do
     emit $ showName n ++ " () {"
     nest $ do
       emitPushFrame fs
       mapM_ emitMoveArg [1..ac]
       emitSizeFrame fs
-      emitExp tm "_R" e
+      emitExp "_R" e
       emitPopFrame fs
     emit "}"
     emit ""
@@ -78,24 +80,26 @@ emitPopFrame 0 = skip
 emitPopFrame _ = emit $ "_SQ=${_SP}; _SR=$(( _SR - 1 )); _SP=${_PSP[_SR]}"
 
 
-emitExp :: TagMap -> String -> SExp -> Emitter
-emitExp _  r (SV (Glob f))        = emitFunCall r f []
-emitExp _  r (SV v@(Loc _))       = emit $ r ++ "=" ++ showParamVar v
-emitExp _  r (SApp _ f vs)        = emitFunCall r f vs
-emitExp tm r (SLet (Loc i) e1 e2) = do
-    emitExp tm (showLoc i) e1
-    emitExp tm r e2
--- emitExp tm r (SUpdate _ e)
--- emitExp tm r (SProj v i)
-emitExp tm r (SCon _ t _ [])      = emit $ r ++ "=" ++ show (askTag tm t)
-emitExp _  r (SCon _ t _ vs)      = emitArray r (show t : map showParamVar vs)
-emitExp tm r (SCase _ v cs)       = emitSwitch tm r v cs
-emitExp tm r (SChkCase v cs)      = emitSwitch tm r v cs
-emitExp _  r (SConst c)           = emit $ r ++ "=" ++ showConst c
-emitExp _  r (SOp o vs)           = emit $ showOp r o vs
-emitExp _  r SNothing             = emit $ r ++ "=0"
--- emitExp tm r (SError x)
-emitExp _  _ x                    = error $ "Expression " ++ show x ++ " is not supported"
+emitExp :: String -> SExp -> Emitter
+emitExp r (SV (Glob f))        = emitFunCall r f []
+emitExp r (SV v@(Loc _))       = emit $ r ++ "=" ++ showParamVar v
+emitExp r (SApp _ f vs)        = emitFunCall r f vs
+emitExp r (SLet (Loc i) e1 e2) = do
+    emitExp (showLoc i) e1
+    emitExp r e2
+-- emitExp r (SUpdate _ e)
+-- emitExp r (SProj v i)
+emitExp r (SCon _ t _ []) = do
+    t' <- askTag t
+    emit $ r ++ "=" ++ show t'
+emitExp r (SCon _ t _ vs)      = emitArray r (show t : map showParamVar vs)
+emitExp r (SCase _ v cs)       = emitSwitch r v cs
+emitExp r (SChkCase v cs)      = emitSwitch r v cs
+emitExp r (SConst c)           = emit $ r ++ "=" ++ showConst c
+emitExp r (SOp o vs)           = emit $ showOp r o vs
+emitExp r SNothing             = emit $ r ++ "=0"
+-- emitExp  r (SError x)
+emitExp _ x                    = error $ "Expression " ++ show x ++ " is not supported"
 
 
 emitFunCall :: String -> Name -> [LVar] -> Emitter
@@ -123,32 +127,32 @@ emitPushArray 0  = skip
 emitPushArray ac = emit $ "_AP=$(( _AP + " ++ show ac ++ " ))"
 
 
-emitSwitch :: TagMap -> String -> LVar -> [SAlt] -> Emitter
-emitSwitch tm r v cs = do
+emitSwitch :: String -> LVar -> [SAlt] -> Emitter
+emitSwitch r v cs = do
     let v' = if any isConCase cs then "${_A[" ++ showVar v ++ "]}" else showParamVar v
     emit $ "case " ++ v' ++ " in"
     sequence_ $
       intersperse (nest $ emit ";;") $
-        map (emitCase tm r v) cs
+        map (emitCase r v) cs
     emit "esac"
   where
     isConCase (SConCase _ _ _ _ _) = True
     isConCase _                    = False
 
-emitCase :: TagMap -> String -> LVar -> SAlt -> Emitter
-emitCase tm r _ (SDefaultCase e) = do
+emitCase :: String -> LVar -> SAlt -> Emitter
+emitCase r _ (SDefaultCase e) = do
     emit "*)"
     nest $
-      emitExp tm r e
-emitCase tm r _ (SConstCase t e) = do
+      emitExp r e
+emitCase r _ (SConstCase t e) = do
     emit $ show t ++ ")"
     nest $
-      emitExp tm r e
-emitCase tm r v (SConCase i0 t _ ns0 e) = do
+      emitExp r e
+emitCase r v (SConCase i0 t _ ns0 e) = do
     emit $ show t ++ ")"
     nest $ do
       emitCaseElement i0 ns0
-      emitExp tm r e
+      emitExp r e
   where
     emitCaseElement :: Int -> [Name] -> Emitter
     emitCaseElement _ []       = skip
