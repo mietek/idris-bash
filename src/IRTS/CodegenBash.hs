@@ -14,68 +14,45 @@ import Paths_idris_bash
 
 codegenBash :: CodeGenerator
 codegenBash ci = do
-    preludeName <- getDataFileName "prelude.sh"
-    prelude <- readFile preludeName
-    let outputName = outputFile ci
-        tm = findTags ci
+    preludePath <- getDataFileName "prelude.sh"
+    prelude <- readFile preludePath
+    let tm = findTags ci
         fs = simpleDecls ci
-        output = collect $ do
-            emit prelude
-            emit ""
-            cgTags tm
-            mapM_ (cgFun tm) fs
-            emit $ name (sMN 0 "runMain")
-    writeFile outputName output
+        outputPath = outputFile ci
+        output = collect $ emitProgram prelude tm fs
+    writeFile outputPath output
 
 
-name :: Name -> String
-name n =
-    "idris_" ++ concatMap char (showCG n)
-  where
-    char x | isAlpha x || isDigit x = [x]
-           | otherwise              = "_" ++ show (fromEnum x) ++ "_"
+emitProgram :: String -> TagMap -> [(Name, SDecl)] -> Emitter
+emitProgram prelude tm fs = do
+    emit prelude
+    emit ""
+    emitTagDefs tm
+    mapM_ (emitFunDef tm) fs
+    emit $ showName (sMN 0 "runMain")
 
 
-loc :: Int -> String
-loc 0 = "_S[_SP]"
-loc i = "_S[_SP + " ++ show i ++ "]"
-
-
-cgVar :: LVar -> String
-cgVar (Loc i) = loc i
-cgVar x       = error $ "Variable " ++ show x ++ " is not supported"
-
-
-cgPVar :: LVar -> String
-cgPVar x = "${" ++ cgVar x ++ "}"
-
-
-cgQPVar :: LVar -> String
-cgQPVar x = "\"" ++ cgPVar x ++ "\""
-
-
-cgTags :: TagMap -> Emitter
-cgTags tm = do
-    mapM_ cgTag (askTags tm)
+emitTagDefs :: TagMap -> Emitter
+emitTagDefs tm = do
+    mapM_ emitTagDef (askTags tm)
     emit $ "_AP=" ++ show (askTagCount tm)
     emit ""
     emit ""
 
-
-cgTag :: (Int, Int) -> Emitter
-cgTag (t, i) =
+emitTagDef :: (Int, Int) -> Emitter
+emitTagDef (t, i) =
     emit $ "_A[" ++ show i ++ "]=" ++ show t
 
 
-cgFun :: TagMap -> (Name, SDecl) -> Emitter
-cgFun tm (n, f@(SFun _ args _ e)) = do
-    emit $ name n ++ " () {"
+emitFunDef :: TagMap -> (Name, SDecl) -> Emitter
+emitFunDef tm (n, f@(SFun _ args _ e)) = do
+    emit $ showName n ++ " () {"
     nest $ do
-      cgPushFrame fs
-      mapM_ cgMoveArg [1..ac]
-      cgSizeFrame fs
-      cgBody tm "_R" e
-      cgPopFrame fs
+      emitPushFrame fs
+      mapM_ emitMoveArg [1..ac]
+      emitSizeFrame fs
+      emitExp tm "_R" e
+      emitPopFrame fs
     emit "}"
     emit ""
     emit ""
@@ -84,185 +61,198 @@ cgFun tm (n, f@(SFun _ args _ e)) = do
     lc = countLocs f
     fs = max ac lc
 
+emitPushFrame :: Int -> Emitter
+emitPushFrame 0 = skip
+emitPushFrame _ = emit $ "_PSP[_SR]=${_SP}; _SP=${_SQ}; _SR=$(( _SR + 1 ))"
 
-cgPushFrame :: Int -> Emitter
-cgPushFrame 0 = skip
-cgPushFrame _ = emit $ "_PSP[_SR]=${_SP}; _SP=${_SQ}; _SR=$(( _SR + 1 ))"
+emitMoveArg :: Int -> Emitter
+emitMoveArg 1 = emit $ "_S[_SP]=$1"
+emitMoveArg i = emit $ "_S[_SP + " ++ show (i - 1) ++ "]=$" ++ show i
 
+emitSizeFrame :: Int -> Emitter
+emitSizeFrame 0  = skip
+emitSizeFrame fs = emit $ "_SQ=$(( _SP + " ++ show fs ++ " ))"
 
-cgMoveArg :: Int -> Emitter
-cgMoveArg 1 = emit $ "_S[_SP]=$1"
-cgMoveArg i = emit $ "_S[_SP + " ++ show (i - 1) ++ "]=$" ++ show i
-
-
-cgSizeFrame :: Int -> Emitter
-cgSizeFrame 0  = skip
-cgSizeFrame fs = emit $ "_SQ=$(( _SP + " ++ show fs ++ " ))"
-
-
-cgPopFrame :: Int -> Emitter
-cgPopFrame 0 = skip
-cgPopFrame _ = emit $ "_SQ=${_SP}; _SR=$(( _SR - 1 )); _SP=${_PSP[_SR]}"
+emitPopFrame :: Int -> Emitter
+emitPopFrame 0 = skip
+emitPopFrame _ = emit $ "_SQ=${_SP}; _SR=$(( _SR - 1 )); _SP=${_PSP[_SR]}"
 
 
-cgBody :: TagMap -> String -> SExp -> Emitter
-cgBody _  r (SV (Glob f))        = cgFunCall r f []
-cgBody _  r (SV v@(Loc _))       = emit $ r ++ "=" ++ cgPVar v
-cgBody _  r (SApp _ f vs)        = cgFunCall r f vs
-cgBody tm r (SLet (Loc i) e1 e2) = do
-    cgBody tm (loc i) e1
-    cgBody tm r e2
--- cgBody tm r (SUpdate _ e)
--- cgBody tm r (SProj v i)
-cgBody tm r (SCon _ t _ [])      = emit $ r ++ "=" ++ show (askTag tm t)
-cgBody _  r (SCon _ t _ vs)      = cgArray r (show t : map cgPVar vs)
-cgBody tm r (SCase _ v cs)       = cgSwitch tm r v cs
-cgBody tm r (SChkCase v cs)      = cgSwitch tm r v cs
-cgBody _  r (SConst c)           = emit $ r ++ "=" ++ cgConst c
-cgBody _  r (SOp o vs)           = emit $ cgOp r o vs
-cgBody _  r SNothing             = emit $ r ++ "=0"
--- cgBody tm r (SError x)
-cgBody _  _ x                    = error $ "Expression " ++ show x ++ " is not supported"
+emitExp :: TagMap -> String -> SExp -> Emitter
+emitExp _  r (SV (Glob f))        = emitFunCall r f []
+emitExp _  r (SV v@(Loc _))       = emit $ r ++ "=" ++ showParamVar v
+emitExp _  r (SApp _ f vs)        = emitFunCall r f vs
+emitExp tm r (SLet (Loc i) e1 e2) = do
+    emitExp tm (showLoc i) e1
+    emitExp tm r e2
+-- emitExp tm r (SUpdate _ e)
+-- emitExp tm r (SProj v i)
+emitExp tm r (SCon _ t _ [])      = emit $ r ++ "=" ++ show (askTag tm t)
+emitExp _  r (SCon _ t _ vs)      = emitArray r (show t : map showParamVar vs)
+emitExp tm r (SCase _ v cs)       = emitSwitch tm r v cs
+emitExp tm r (SChkCase v cs)      = emitSwitch tm r v cs
+emitExp _  r (SConst c)           = emit $ r ++ "=" ++ showConst c
+emitExp _  r (SOp o vs)           = emit $ showOp r o vs
+emitExp _  r SNothing             = emit $ r ++ "=0"
+-- emitExp tm r (SError x)
+emitExp _  _ x                    = error $ "Expression " ++ show x ++ " is not supported"
 
 
-cgFunCall :: String -> Name -> [LVar] -> Emitter
-cgFunCall r f vs = do
-    emit $ showSep " " (name f : map cgQPVar vs)
-    cgFunRet r
+emitFunCall :: String -> Name -> [LVar] -> Emitter
+emitFunCall r f vs = do
+    emit $ showSep " " (showName f : map showQuotedParamVar vs)
+    if r == "_R"
+      then skip
+      else emit $ r ++ "=${_R}"
 
 
-cgFunRet :: String -> Emitter
-cgFunRet "_R" = skip
-cgFunRet r    = emit $ r ++ "=${_R}"
-
-
-cgArray :: String -> [String] -> Emitter
-cgArray r args = do
-    mapM_ cgArrayElement (zip [0..] args)
+emitArray :: String -> [String] -> Emitter
+emitArray r args = do
+    mapM_ emitArrayElement (zip [0..] args)
     emit $ r ++ "=${_AP}"
-    cgPushArray ac
+    emitPushArray ac
   where
     ac = length args
 
+emitArrayElement :: (Int, String) -> Emitter
+emitArrayElement (0, arg) = emit $ "_A[_AP]=" ++ arg
+emitArrayElement (i, arg) = emit $ "_A[_AP + " ++ show i ++ "]=" ++ arg
 
-cgArrayElement :: (Int, String) -> Emitter
-cgArrayElement (0, arg) = emit $ "_A[_AP]=" ++ arg
-cgArrayElement (i, arg) = emit $ "_A[_AP + " ++ show i ++ "]=" ++ arg
-
-
-cgPushArray :: Int -> Emitter
-cgPushArray 0  = skip
-cgPushArray ac = emit $ "_AP=$(( _AP + " ++ show ac ++ " ))"
+emitPushArray :: Int -> Emitter
+emitPushArray 0  = skip
+emitPushArray ac = emit $ "_AP=$(( _AP + " ++ show ac ++ " ))"
 
 
-cgSwitch :: TagMap -> String -> LVar -> [SAlt] -> Emitter
-cgSwitch tm r v cs = do
-    let v' = if any isConCase cs then "${_A[" ++ cgVar v ++ "]}" else cgPVar v
+emitSwitch :: TagMap -> String -> LVar -> [SAlt] -> Emitter
+emitSwitch tm r v cs = do
+    let v' = if any isConCase cs then "${_A[" ++ showVar v ++ "]}" else showParamVar v
     emit $ "case " ++ v' ++ " in"
     sequence_ $
       intersperse (nest $ emit ";;") $
-        map (cgCase tm r v) cs
+        map (emitCase tm r v) cs
     emit "esac"
   where
     isConCase (SConCase _ _ _ _ _) = True
     isConCase _                    = False
 
-
-cgCase :: TagMap -> String -> LVar -> SAlt -> Emitter
-cgCase tm r _ (SDefaultCase e) = do
+emitCase :: TagMap -> String -> LVar -> SAlt -> Emitter
+emitCase tm r _ (SDefaultCase e) = do
     emit "*)"
     nest $
-      cgBody tm r e
-cgCase tm r _ (SConstCase t e) = do
+      emitExp tm r e
+emitCase tm r _ (SConstCase t e) = do
     emit $ show t ++ ")"
     nest $
-      cgBody tm r e
-cgCase tm r v (SConCase i0 t _ ns0 e) = do
+      emitExp tm r e
+emitCase tm r v (SConCase i0 t _ ns0 e) = do
     emit $ show t ++ ")"
     nest $ do
-      cgCaseElement i0 ns0
-      cgBody tm r e
+      emitCaseElement i0 ns0
+      emitExp tm r e
   where
-    cgCaseElement :: Int -> [Name] -> Emitter
-    cgCaseElement _ []       = skip
-    cgCaseElement i (_ : ns) = do
-        emit $ loc i ++ "=${_A[" ++ cgVar v ++ " + " ++ show (i - i0 + 1) ++ "]}"
-        cgCaseElement (i + 1) ns
+    emitCaseElement :: Int -> [Name] -> Emitter
+    emitCaseElement _ []       = skip
+    emitCaseElement i (_ : ns) = do
+        emit $ showLoc i ++ "=${_A[" ++ showVar v ++ " + " ++ show (i - i0 + 1) ++ "]}"
+        emitCaseElement (i + 1) ns
 
 
-cgConst :: Const -> String
-cgConst (I i)             = show i
-cgConst (BI i)            = show i
--- cgConst (Ch c)
-cgConst (Str s)           = "'" ++ s ++ "'"
-cgConst TheWorld          = "0"
-cgConst x | isTypeConst x = "0"
-          | otherwise     = error $ "Constant " ++ show x ++ " is not supported"
+showName :: Name -> String
+showName n =
+    "idris_" ++ concatMap char (showCG n)
+  where
+    char x | isAlpha x || isDigit x = [x]
+           | otherwise              = "_" ++ show (fromEnum x) ++ "_"
 
 
-cgOp :: String -> PrimFn -> [LVar] -> String
-cgOp r (LPlus  (ATInt _)) [n, m] = r ++ "=$(( " ++ cgVar n ++ " + "  ++ cgVar m ++ " ))"
-cgOp r (LMinus (ATInt _)) [n, m] = r ++ "=$(( " ++ cgVar n ++ " - "  ++ cgVar m ++ " ))"
-cgOp r (LTimes (ATInt _)) [n, m] = r ++ "=$(( " ++ cgVar n ++ " * "  ++ cgVar m ++ " ))"
--- cgOp r LUDiv
--- cgOp r LSDiv
--- cgOp r LURem
--- cgOp r LSRem
--- cgOp r LAnd
--- cgOp r LOr
--- cgOp r LXOr
--- cgOp r LCompl
--- cgOp r LSHL
--- cgOp r LLSHR
--- cgOp r LASHR
-cgOp r (LEq    (ATInt _)) [n, m] = r ++ "=$(( " ++ cgVar n ++ " == " ++ cgVar m ++ " ))"
--- cgOp r LLt
--- cgOp r LLe
--- cgOp r LGt
--- cgOp r LGe
-cgOp r (LSLt   (ATInt _)) [n, m] = r ++ "=$(( " ++ cgVar n ++ " < "  ++ cgVar m ++ " ))"
-cgOp r (LSLe   (ATInt _)) [n, m] = r ++ "=$(( " ++ cgVar n ++ " <= " ++ cgVar m ++ " ))"
-cgOp r (LSGt   (ATInt _)) [n, m] = r ++ "=$(( " ++ cgVar n ++ " > "  ++ cgVar m ++ " ))"
-cgOp r (LSGe   (ATInt _)) [n, m] = r ++ "=$(( " ++ cgVar n ++ " >= " ++ cgVar m ++ " ))"
-cgOp r (LSExt _ _)        [n]    = r ++ "=" ++ cgPVar n
--- cgOp r LZExt
--- cgOp r LTrunc
-cgOp r LStrConcat         [s, t] = r ++ "=" ++ cgPVar s ++ cgPVar t
--- cgOp r LStrLt
--- cgOp r LStrEq
-cgOp r LStrLen            [s]    = r ++ "=${#" ++  cgVar s ++ "}"
--- cgOp r LIntFloat
--- cgOp r LFloatInt
-cgOp r (LIntStr _)        [n]    = r ++ "=" ++ cgPVar n
--- cgOp r LStrInt
--- cgOp r LFloatStr
--- cgOp r LStrFloat
--- cgOp r LChInt
--- cgOp r LIntCh
--- cgOp r LBitCast
--- cgOp r LFExp
--- cgOp r LFLog
--- cgOp r LFSin
--- cgOp r LFCos
--- cgOp r LFTan
--- cgOp r LFASin
--- cgOp r LFACos
--- cgOp r LFATan
--- cgOp r LFSqrt
--- cgOp r LFFloor
--- cgOp r LFCeil
--- cgOp r LFNegate
-cgOp r LStrHead           [s]    = r ++ "=${" ++ cgVar s ++ ":0:1}"
-cgOp r LStrTail           [s]    = r ++ "=${" ++ cgVar s ++ ":1}"
-cgOp r LStrCons           [c, s] = r ++ "=" ++ cgPVar c ++ cgPVar s
-cgOp r LStrIndex          [s, n] = r ++ "=${" ++ cgVar s ++ ":" ++ cgPVar n ++ ":1}"
--- cgOp r LStrRev
--- cgOp r LReadStr
-cgOp _ LWriteStr          [_, s] = "echo " ++ cgQPVar s
--- cgOp r LSystemInfo
--- cgOp r LFork
--- cgOp r LPar
--- cgOp r LExternal
--- cgOp r LNoOp
--- cgOp _ o _                       = error $ "Operator " ++ show o ++ " is not supported"
-cgOp _ o _                       = "echo 'Operator " ++ show o ++ " is not supported' >&2"
+showLoc :: Int -> String
+showLoc 0 = "_S[_SP]"
+showLoc i = "_S[_SP + " ++ show i ++ "]"
+
+showVar :: LVar -> String
+showVar (Loc i) = showLoc i
+showVar x       = error $ "Variable " ++ show x ++ " is not supported"
+
+showParamVar :: LVar -> String
+showParamVar x = "${" ++ showVar x ++ "}"
+
+showQuotedParamVar :: LVar -> String
+showQuotedParamVar x = "\"" ++ showParamVar x ++ "\""
+
+
+showConst :: Const -> String
+showConst (I i)             = show i
+showConst (BI i)            = show i
+-- showConst (Ch c)
+showConst (Str s)           = "'" ++ s ++ "'"
+showConst TheWorld          = "0"
+showConst x | isTypeConst x = "0"
+            | otherwise     = error $ "Constant " ++ show x ++ " is not supported"
+
+
+showOp :: String -> PrimFn -> [LVar] -> String
+showOp r (LPlus  (ATInt _)) [n, m] = r ++ "=$(( " ++ showVar n ++ " + "  ++ showVar m ++ " ))"
+showOp r (LMinus (ATInt _)) [n, m] = r ++ "=$(( " ++ showVar n ++ " - "  ++ showVar m ++ " ))"
+showOp r (LTimes (ATInt _)) [n, m] = r ++ "=$(( " ++ showVar n ++ " * "  ++ showVar m ++ " ))"
+-- showOp r LUDiv
+-- showOp r LSDiv
+-- showOp r LURem
+-- showOp r LSRem
+-- showOp r LAnd
+-- showOp r LOr
+-- showOp r LXOr
+-- showOp r LCompl
+-- showOp r LSHL
+-- showOp r LLSHR
+-- showOp r LASHR
+showOp r (LEq    (ATInt _)) [n, m] = r ++ "=$(( " ++ showVar n ++ " == " ++ showVar m ++ " ))"
+-- showOp r LLt
+-- showOp r LLe
+-- showOp r LGt
+-- showOp r LGe
+showOp r (LSLt   (ATInt _)) [n, m] = r ++ "=$(( " ++ showVar n ++ " < "  ++ showVar m ++ " ))"
+showOp r (LSLe   (ATInt _)) [n, m] = r ++ "=$(( " ++ showVar n ++ " <= " ++ showVar m ++ " ))"
+showOp r (LSGt   (ATInt _)) [n, m] = r ++ "=$(( " ++ showVar n ++ " > "  ++ showVar m ++ " ))"
+showOp r (LSGe   (ATInt _)) [n, m] = r ++ "=$(( " ++ showVar n ++ " >= " ++ showVar m ++ " ))"
+showOp r (LSExt _ _)        [n]    = r ++ "=" ++ showParamVar n
+-- showOp r LZExt
+-- showOp r LTrunc
+showOp r LStrConcat         [s, t] = r ++ "=" ++ showParamVar s ++ showParamVar t
+-- showOp r LStrLt
+-- showOp r LStrEq
+showOp r LStrLen            [s]    = r ++ "=${#" ++  showVar s ++ "}"
+-- showOp r LIntFloat
+-- showOp r LFloatInt
+showOp r (LIntStr _)        [n]    = r ++ "=" ++ showParamVar n
+-- showOp r LStrInt
+-- showOp r LFloatStr
+-- showOp r LStrFloat
+-- showOp r LChInt
+-- showOp r LIntCh
+-- showOp r LBitCast
+-- showOp r LFExp
+-- showOp r LFLog
+-- showOp r LFSin
+-- showOp r LFCos
+-- showOp r LFTan
+-- showOp r LFASin
+-- showOp r LFACos
+-- showOp r LFATan
+-- showOp r LFSqrt
+-- showOp r LFFloor
+-- showOp r LFCeil
+-- showOp r LFNegate
+showOp r LStrHead           [s]    = r ++ "=${" ++ showVar s ++ ":0:1}"
+showOp r LStrTail           [s]    = r ++ "=${" ++ showVar s ++ ":1}"
+showOp r LStrCons           [c, s] = r ++ "=" ++ showParamVar c ++ showParamVar s
+showOp r LStrIndex          [s, n] = r ++ "=${" ++ showVar s ++ ":" ++ showParamVar n ++ ":1}"
+-- showOp r LStrRev
+-- showOp r LReadStr
+showOp _ LWriteStr          [_, s] = "echo " ++ showQuotedParamVar s
+-- showOp r LSystemInfo
+-- showOp r LFork
+-- showOp r LPar
+-- showOp r LExternal
+-- showOp r LNoOp
+-- showOp _ o _                       = error $ "Operator " ++ show o ++ " is not supported"
+showOp _ o _                       = "echo 'Operator " ++ show o ++ " is not supported' >&2"
