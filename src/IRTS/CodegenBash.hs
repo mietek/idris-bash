@@ -1,84 +1,100 @@
 module IRTS.CodegenBash (codegenBash) where
 
-import Data.Char
-import Data.List
-import IRTS.CodegenCommon
+import Data.Char (isAlpha, isDigit)
+import Data.List (intersperse)
+import IRTS.CodegenCommon (CodeGenerator, outputFile)
 import IRTS.Codegen.ReaderEmitter
-import IRTS.Codegen.Utils
-import IRTS.Lang
-import IRTS.Simplified
-import Idris.Core.TT
+import IRTS.Lang (PrimFn(..), LVar(..))
+import IRTS.Simplified (SAlt(..), SDecl(..), SExp(..))
+import Idris.Core.TT (ArithTy(..), Const(..), Name, isTypeConst, showCG, showSep, sMN)
 
-import Paths_idris_bash
+import Paths_idris_bash (getDataFileName)
 
 
 codegenBash :: CodeGenerator
 codegenBash ci = do
-    preludePath <- getDataFileName "prelude.sh"
-    prelude <- readFile preludePath
-    let fs = simpleDecls ci
-        outputPath = outputFile ci
-        output = collect prelude ci $ emitProgram fs
-    writeFile outputPath output
+    pPath <- getDataFileName "prelude.sh"
+    p <- readFile pPath
+    let oPath = outputFile ci
+        o = collect $
+          withProgInfo p ci $
+            emitProg
+    writeFile oPath o
 
 
-emitProgram :: [(Name, SDecl)] -> Emitter
-emitProgram fs = do
-    prelude <- askPrelude
-    emit prelude
+emitProg :: Emitter
+emitProg = do
+    p <- askPrelude
+    fs <- askFuns
+    emit p
     emit ""
-    emitTagDefs
-    mapM_ emitFunDef fs
+    emitTags
+    mapM_ emitFun fs
     emit $ showName (sMN 0 "runMain")
 
 
-emitTagDefs :: Emitter
-emitTagDefs = do
+emitTags :: Emitter
+emitTags = do
     ts <- askTags
     tc <- askTagCount
-    mapM_ emitTagDef ts
+    mapM_ emitTag ts
     emit $ "_AP=" ++ show tc
     emit ""
     emit ""
 
-emitTagDef :: (Int, Int) -> Emitter
-emitTagDef (t, i) =
+emitTag :: (Int, Int) -> Emitter
+emitTag (t, i) =
     emit $ "_A[" ++ show i ++ "]=" ++ show t
 
 
-emitFunDef :: (Name, SDecl) -> Emitter
-emitFunDef (n, f@(SFun _ args _ e)) = do
+emitFun :: (Name, SDecl) -> Emitter
+emitFun (n, f@(SFun _ _ _ e)) = do
     emit $ showName n ++ " () {"
-    nest $ do
-      emitPushFrame fs
-      mapM_ emitMoveArg [1..ac]
-      emitSizeFrame fs
-      withRetTarget "_R" $
-        emitExp e
-      emitPopFrame fs
+    withFunInfo f $ do
+      emitPushFrame
+      emitMoveArgs
+      emitSizeFrame
+      emitExp e
+      emitPopFrame
     emit "}"
     emit ""
     emit ""
-  where
-    ac = length args
-    lc = countLocs f
-    fs = max ac lc
 
-emitPushFrame :: Int -> Emitter
-emitPushFrame 0 = skip
-emitPushFrame _ = emit $ "_PSP[_SR]=${_SP}; _SP=${_SQ}; _SR=$(( _SR + 1 ))"
+emitPushFrame :: Emitter
+emitPushFrame = do
+    ac <- askArgCount
+    lc <- askLocCount
+    let fs = max ac lc
+    if fs == 0
+      then skip
+      else emit $ "_PSP[_SR]=${_SP}; _SP=${_SQ}; _SR=$(( _SR + 1 ))"
+
+emitMoveArgs :: Emitter
+emitMoveArgs = do
+    ac <- askArgCount
+    mapM_ emitMoveArg [1..ac]
 
 emitMoveArg :: Int -> Emitter
 emitMoveArg 1 = emit $ "_S[_SP]=$1"
 emitMoveArg i = emit $ "_S[_SP + " ++ show (i - 1) ++ "]=$" ++ show i
 
-emitSizeFrame :: Int -> Emitter
-emitSizeFrame 0  = skip
-emitSizeFrame fs = emit $ "_SQ=$(( _SP + " ++ show fs ++ " ))"
+emitSizeFrame :: Emitter
+emitSizeFrame = do
+    ac <- askArgCount
+    lc <- askLocCount
+    let fs = max ac lc
+    if fs == 0
+      then skip
+      else emit $ "_SQ=$(( _SP + " ++ show fs ++ " ))"
 
-emitPopFrame :: Int -> Emitter
-emitPopFrame 0 = skip
-emitPopFrame _ = emit $ "_SQ=${_SP}; _SR=$(( _SR - 1 )); _SP=${_PSP[_SR]}"
+emitPopFrame :: Emitter
+emitPopFrame = do
+    ac <- askArgCount
+    lc <- askLocCount
+    let fs = max ac lc
+    if fs == 0
+      then skip
+      else emit $ "_SQ=${_SP}; _SR=$(( _SR - 1 )); _SP=${_PSP[_SR]}"
 
 
 emitExp :: SExp -> Emitter

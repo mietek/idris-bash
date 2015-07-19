@@ -2,19 +2,18 @@ module IRTS.Codegen.Utils where
 
 import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as M
-import Data.List
-import IRTS.CodegenCommon
-import IRTS.Lang
-import IRTS.Simplified
-import Idris.Core.TT
+import Data.List (nub, sort)
+import IRTS.Lang (LVar(..))
+import IRTS.Simplified (SAlt(..), SDecl(..), SExp(..))
+import Idris.Core.TT (Name)
 
 
 type TagMap = IntMap Int
 
-findTags :: CodegenInfo -> TagMap
-findTags ci = M.fromAscList (zip ts [0..])
+findTags :: [(Name, SDecl)] -> TagMap
+findTags fs = M.fromAscList (zip ts [0..])
   where
-    ts = nub (sort (concatMap ftFun (simpleDecls ci)))
+    ts = nub (sort (concatMap ftFun fs))
 
 ftFun :: (Name, SDecl) -> [Int]
 ftFun (_, SFun _ _ _ e) = ftExp e

@@ -4,17 +4,17 @@
 {-# LANGUAGE TypeSynonymInstances #-}
 
 module IRTS.Codegen.Emitter
-  ( emit
+  ( Emitter
+  , EmitterM
+  , emit
   , nest
   , skip
   , collect
-  , Emitter
-  , EmitterM
   ) where
 
-import Control.Applicative
-import Control.Monad
-import Data.String
+import Control.Applicative (Applicative, pure, (<*>))
+import Control.Monad (ap)
+import Data.String (IsString, fromString)
 
 
 data EmitterM a = E a [ShowS]
