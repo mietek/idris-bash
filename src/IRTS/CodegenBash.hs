@@ -66,8 +66,7 @@ emitPushFrame = do
     if fs - ac == 0
       then skip
       else emit $
-        "_PSP[_F]=${_SP}; " ++
-        "_F=$(( _F + 1 )); " ++
+        "_PSP[_F++]=${_SP}; " ++
         "_SP=${_SQ}; " ++
         "_SQ=$(( _SP + " ++ show (lc - ac) ++ " ))"
 
@@ -79,9 +78,8 @@ emitPopFrame = do
     if fs - ac == 0
       then skip
       else emit $
-        "_F=$(( _F - 1 )); " ++
         "_SQ=${_SP}; " ++
-        "_SP=${_PSP[_F]}"
+        "_SP=${_PSP[--_F]}"
 
 
 emitExp :: SExp -> Emitter
