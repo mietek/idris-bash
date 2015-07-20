@@ -84,7 +84,7 @@ emitPopFrame = do
 
 emitExp :: SExp -> Emitter
 emitExp (SV (Glob f))        = emitFunCall f []
-emitExp (SV v@(Loc _))       = showParamVar v >>= emitRet
+emitExp (SV v@(Loc _))       = emitVar v
 emitExp (SApp _ f vs)        = emitFunCall f vs
 emitExp (SLet (Loc i) e1 e2) = do
     i' <- showLocTarget i
@@ -107,6 +107,17 @@ emitRet :: String -> Emitter
 emitRet s = do
     rt <- askRetTarget
     emit $ rt ++ "=" ++ s
+
+
+emitVar :: LVar -> Emitter
+emitVar v = do
+    v' <- showVar v
+    rt <- askRetTarget
+    if rt == v'
+      then skip
+      else do
+        v'' <- showParamVar v
+        emitRet v''
 
 
 emitFunCall :: Name -> [LVar] -> Emitter
@@ -262,7 +273,7 @@ emitOp (LSLt   (ATInt _)) [n1, n2] = emitArithOp n1 "<" n2
 emitOp (LSLe   (ATInt _)) [n1, n2] = emitArithOp n1 "<=" n2
 emitOp (LSGt   (ATInt _)) [n1, n2] = emitArithOp n1 ">" n2
 emitOp (LSGe   (ATInt _)) [n1, n2] = emitArithOp n1 ">=" n2
-emitOp (LSExt _ _)        [n]      = showParamVar n >>= emitRet
+emitOp (LSExt _ _)        [n]      = emitVar n
 -- emitOp LZExt
 -- emitOp LTrunc
 emitOp LStrConcat         [s1, s2] = do
@@ -276,7 +287,7 @@ emitOp LStrLen            [s]      = do
     emitRet $ "${#" ++ s' ++ "}"
 -- emitOp LIntFloat
 -- emitOp LFloatInt
-emitOp (LIntStr _)        [n]      = showParamVar n >>= emitRet
+emitOp (LIntStr _)        [n]      = emitVar n
 -- emitOp LStrInt
 -- emitOp LFloatStr
 -- emitOp LStrFloat
