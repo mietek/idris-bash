@@ -149,14 +149,14 @@ emitArrayElement (i, arg) = emit $ "_A[_AP + " ++ show i ++ "]=" ++ arg
 
 emitSwitch :: LVar -> [SAlt] -> Emitter
 emitSwitch v cs = do
-    ap <- showVar v
+    v' <- showVar v
     cv <- if any isConCase cs
-            then return $ "${_A[" ++ ap ++ "]}"
+            then return $ "${_A[" ++ v' ++ "]}"
             else showParamVar v
     emit $ "case " ++ cv ++ " in"
     sequence_ $
       intersperse (nest $ emit ";;") $
-        map (emitCase ap) cs
+        map (emitCase v') cs
     emit "esac"
   where
     isConCase (SConCase _ _ _ _ _) = True
@@ -171,19 +171,24 @@ emitCase _ (SConstCase t e) = do
     emit $ show t ++ ")"
     nest $
       emitExp e
-emitCase ap (SConCase i0 t _ ns0 e) = do
+emitCase _ (SConCase _ t _ [] e) = do
+    emit $ show t ++ ")"
+    nest $
+      emitExp e
+emitCase v' (SConCase i0 t _ ns e) = do
     emit $ show t ++ ")"
     nest $ do
-      emitCaseElement i0 ns0
+      emitProj i0
       emitExp e
   where
-    emitCaseElement :: Int -> [Name] -> Emitter
-    emitCaseElement _ []       = skip
-    emitCaseElement i (_ : ns) = do
-        i' <- showLocTarget i
-        withRetTarget i' $
-          emitRet $ "${_A[" ++ ap ++ " + " ++ show (i - i0 + 1) ++ "]}"
-        emitCaseElement (i + 1) ns
+    emitProj i =
+        if i == i0 + length ns
+          then skip
+          else do
+            i' <- showLocTarget i
+            withRetTarget i' $
+              emitRet $ "${_A[" ++ v' ++ " + " ++ show (i - i0 + 1) ++ "]}"
+            emitProj (i + 1)
 
 
 showName :: Name -> String
