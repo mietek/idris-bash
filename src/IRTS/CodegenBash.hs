@@ -28,23 +28,8 @@ emitProg = do
     fs <- askFuns
     emit p
     emit ""
-    emitTags
     mapM_ emitFun fs
     emit $ showName (sMN 0 "runMain")
-
-
-emitTags :: Emitter
-emitTags = do
-    ts <- askTags
-    tc <- askTagCount
-    mapM_ emitTag ts
-    emit $ "_AP=" ++ show tc
-    emit ""
-    emit ""
-
-emitTag :: (Int, Int) -> Emitter
-emitTag (t, i) =
-    emit $ "_A[" ++ show i ++ "]=" ++ show t
 
 
 emitFun :: (Name, SDecl) -> Emitter
@@ -131,38 +116,31 @@ emitFunCall f vs = do
 
 
 emitArray :: Int -> [LVar] -> Emitter
-emitArray t [] = do
-    ap <- askTag t
-    emitRet $ show ap
+emitArray t [] = emitRet $ show t
 emitArray t vs = do
     vs' <- mapM showParamVar vs
-    mapM_ emitArrayElement (zip [0..] (show t : vs'))
-    emitRet "${_AP}"
-    emit $ "_AP=$(( _AP + " ++ show ec ++ " ))"
+    emitRet $ "\"" ++ showSep " " (show t : map wrap vs') ++ "\""
   where
-    ec = length vs + 1
-
-emitArrayElement :: (Int, String) -> Emitter
-emitArrayElement (0, arg) = emit $ "_A[_AP]=" ++ arg
-emitArrayElement (i, arg) = emit $ "_A[_AP + " ++ show i ++ "]=" ++ arg
+    wrap s = "(" ++ s ++ ")"
 
 
 emitSwitch :: LVar -> [SAlt] -> Emitter
 emitSwitch v cs = do
-    v' <- showVar v
+    v' <- showBareVar v
     cv <- if any isConCase cs
-            then return $ "${_A[" ++ v' ++ "]}"
+            then return $ "${" ++ v' ++ "%% *}"
             else showParamVar v
     emit $ "case " ++ cv ++ " in"
     sequence_ $
       intersperse (nest $ emit ";;") $
-        map (emitCase v') cs
+        map (emitCase v) cs
     emit "esac"
   where
     isConCase (SConCase _ _ _ _ _) = True
     isConCase _                    = False
 
-emitCase :: String -> SAlt -> Emitter
+
+emitCase :: LVar -> SAlt -> Emitter
 emitCase _ (SDefaultCase e) = do
     emit "*)"
     nest $
@@ -175,9 +153,11 @@ emitCase _ (SConCase _ t _ [] e) = do
     emit $ show t ++ ")"
     nest $
       emitExp e
-emitCase v' (SConCase i0 t _ ns e) = do
+emitCase v (SConCase i0 t _ ns e) = do
     emit $ show t ++ ")"
     nest $ do
+      v' <- showQuotedParamVar v
+      emit $ "IRTS_decodeArray " ++ v'
       emitProj i0
       emitExp e
   where
@@ -187,7 +167,7 @@ emitCase v' (SConCase i0 t _ ns e) = do
           else do
             i' <- showLocTarget i
             withRetTarget i' $
-              emitRet $ "${_A[" ++ v' ++ " + " ++ show (i - i0 + 1) ++ "]}"
+              emitRet $ "${_A[" ++ show (i - i0 + 1) ++ "]}"
             emitProj (i + 1)
 
 

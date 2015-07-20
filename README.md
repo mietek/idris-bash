@@ -15,9 +15,9 @@ Example
     $ time bash pythag.sh
     [(3, (4, 5)), (6, (8, 10)), (5, (12, 13)), (9, (12, 15))]
 
-    real    0m9.965s
-    user    0m9.938s
-    sys     0m0.016s
+    real    0m17.330s
+    user    0m17.287s
+    sys     0m0.021s
 
 Input: [`pythag.idr`](pythag.idr)
 
