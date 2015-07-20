@@ -89,15 +89,15 @@ emitExp (SV (Glob f))        = emitFunCall f []
 emitExp (SV v@(Loc _))       = showParamVar v >>= emitRet
 emitExp (SApp _ f vs)        = emitFunCall f vs
 emitExp (SLet (Loc i) e1 e2) = do
-    i' <- showLoc i
+    i' <- showLocTarget i
     withRetTarget i' $
       emitExp e1
     emitExp e2
 -- emitExp (SUpdate _ e)
 -- emitExp (SProj v i)
 emitExp (SCon _ t _ []) = do
-    t' <- askTag t
-    emitRet $ show t'
+    ap <- askTag t
+    emitRet $ show ap
 emitExp (SCon _ t _ vs) = do
     vs' <- mapM showParamVar vs
     emitArray (show t : vs')
@@ -145,14 +145,14 @@ emitPushArray ac = emit $ "_AP=$(( _AP + " ++ show ac ++ " ))"
 
 emitSwitch :: LVar -> [SAlt] -> Emitter
 emitSwitch v cs = do
-    v' <- showVar v
-    v'' <- if any isConCase cs
-             then return $ "${_A[" ++ v' ++ "]}"
-             else showParamVar v
-    emit $ "case " ++ v'' ++ " in"
+    ap <- showVar v
+    cv <- if any isConCase cs
+            then return $ "${_A[" ++ ap ++ "]}"
+            else showParamVar v
+    emit $ "case " ++ cv ++ " in"
     sequence_ $
       intersperse (nest $ emit ";;") $
-        map (emitCase v') cs
+        map (emitCase ap) cs
     emit "esac"
   where
     isConCase (SConCase _ _ _ _ _) = True
@@ -167,7 +167,7 @@ emitCase _ (SConstCase t e) = do
     emit $ show t ++ ")"
     nest $
       emitExp e
-emitCase v' (SConCase i0 t _ ns0 e) = do
+emitCase ap (SConCase i0 t _ ns0 e) = do
     emit $ show t ++ ")"
     nest $ do
       emitCaseElement i0 ns0
@@ -176,8 +176,9 @@ emitCase v' (SConCase i0 t _ ns0 e) = do
     emitCaseElement :: Int -> [Name] -> Emitter
     emitCaseElement _ []       = skip
     emitCaseElement i (_ : ns) = do
-        i' <- showLoc i
-        emit $ i' ++ "=${_A[" ++ v' ++ " + " ++ show (i - i0 + 1) ++ "]}"
+        i' <- showLocTarget i
+        withRetTarget i' $
+          emitRet $ "${_A[" ++ ap ++ " + " ++ show (i - i0 + 1) ++ "]}"
         emitCaseElement (i + 1) ns
 
 
@@ -190,31 +191,42 @@ showName n =
 
 
 showArgLoc :: Int -> String
-showArgLoc i = "$" ++ show (i + 1)
+showArgLoc i = show (i + 1)
 
 showStackLoc :: Int -> String
 showStackLoc 0 = "_S[_SP]"
 showStackLoc i = "_S[_SP + " ++ show i ++ "]"
 
 
-showLoc :: Int -> EmitterM String
-showLoc i = do
+showLocTarget :: Int -> EmitterM String
+showLocTarget i = do
+    ac <- askArgCount
+    if i < ac
+      then error $ "Cannot assign to argument"
+      else return $ showStackLoc (i - ac)
+
+showBareVar :: LVar -> EmitterM String
+showBareVar (Loc i) = do
     ac <- askArgCount
     if i < ac
       then return $ showArgLoc i
       else return $ showStackLoc (i - ac)
+showBareVar v       = error $ "Variable " ++ show v ++ " is not supported"
 
 showVar :: LVar -> EmitterM String
-showVar (Loc i) = showLoc i
+showVar (Loc i) = do
+    ac <- askArgCount
+    if i < ac
+      then return $ "$" ++ showArgLoc i
+      else return $ showStackLoc (i - ac)
 showVar v       = error $ "Variable " ++ show v ++ " is not supported"
 
 showParamVar :: LVar -> EmitterM String
 showParamVar (Loc i) = do
     ac <- askArgCount
-    i' <- showLoc i
     if i < ac
-      then return i'
-      else return $ "${" ++ i' ++ "}"
+      then return $ "$" ++ showArgLoc i
+      else return $ "${" ++ showStackLoc (i - ac) ++ "}"
 showParamVar v       = error $ "Variable " ++ show v ++ " is not supported"
 
 showQuotedParamVar :: LVar -> EmitterM String
@@ -263,11 +275,11 @@ emitOp (LSExt _ _)        [n]      = showParamVar n >>= emitRet
 emitOp LStrConcat         [s1, s2] = do
     s1' <- showParamVar s1
     s2' <- showParamVar s2
-    emitRet $  s1' ++ s2'
+    emitRet $ s1' ++ s2'
 -- emitOp LStrLt
 -- emitOp LStrEq
 emitOp LStrLen            [s]      = do
-    s' <- showVar s
+    s' <- showBareVar s
     emitRet $ "${#" ++ s' ++ "}"
 -- emitOp LIntFloat
 -- emitOp LFloatInt
@@ -291,17 +303,17 @@ emitOp (LIntStr _)        [n]      = showParamVar n >>= emitRet
 -- emitOp LFCeil
 -- emitOp LFNegate
 emitOp LStrHead           [s]    = do
-    s' <- showVar s
+    s' <- showBareVar s
     emitRet $ "${" ++ s' ++ ":0:1}"
 emitOp LStrTail           [s]    = do
-    s' <- showVar s
+    s' <- showBareVar s
     emitRet $ "${" ++ s' ++ ":1}"
 emitOp LStrCons           [c, s] = do
     c' <- showParamVar c
     s' <- showParamVar s
     emitRet $ c' ++ s'
 emitOp LStrIndex          [s, n] = do
-    s' <- showVar s
+    s' <- showBareVar s
     n' <- showParamVar n
     emitRet $ "${" ++ s' ++ ":" ++ n' ++ ":1}"
 -- emitOp LStrRev
