@@ -116,7 +116,7 @@ emitFunCall f vs = do
     emit $ showSep " " (showName f : vs')
     if rt == "_R"
       then skip
-      else emit $ rt ++ "=${_R}"
+      else emitRet "${_R}"
 
 
 emitArray :: Int -> [LVar] -> Emitter
