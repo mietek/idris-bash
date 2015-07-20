@@ -95,12 +95,7 @@ emitExp (SLet (Loc i) e1 e2) = do
     emitExp e2
 -- emitExp (SUpdate _ e)
 -- emitExp (SProj v i)
-emitExp (SCon _ t _ []) = do
-    ap <- askTag t
-    emitRet $ show ap
-emitExp (SCon _ t _ vs) = do
-    vs' <- mapM showParamVar vs
-    emitArray (show t : vs')
+emitExp (SCon _ t _ vs)      = emitArray t vs
 emitExp (SCase _ v cs)       = emitSwitch v cs
 emitExp (SChkCase v cs)      = emitSwitch v cs
 emitExp (SConst c)           = emitRet $ showConst c
@@ -126,21 +121,21 @@ emitFunCall f vs = do
       else emit $ rt ++ "=${_R}"
 
 
-emitArray :: [String] -> Emitter
-emitArray args = do
-    mapM_ emitArrayElement (zip [0..] args)
+emitArray :: Int -> [LVar] -> Emitter
+emitArray t [] = do
+    ap <- askTag t
+    emitRet $ show ap
+emitArray t vs = do
+    vs' <- mapM showParamVar vs
+    mapM_ emitArrayElement (zip [0..] (show t : vs'))
     emitRet "${_AP}"
-    emitPushArray ac
+    emit $ "_AP=$(( _AP + " ++ show ec ++ " ))"
   where
-    ac = length args
+    ec = length vs + 1
 
 emitArrayElement :: (Int, String) -> Emitter
 emitArrayElement (0, arg) = emit $ "_A[_AP]=" ++ arg
 emitArrayElement (i, arg) = emit $ "_A[_AP + " ++ show i ++ "]=" ++ arg
-
-emitPushArray :: Int -> Emitter
-emitPushArray 0  = skip
-emitPushArray ac = emit $ "_AP=$(( _AP + " ++ show ac ++ " ))"
 
 
 emitSwitch :: LVar -> [SAlt] -> Emitter
