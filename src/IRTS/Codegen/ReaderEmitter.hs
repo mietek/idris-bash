@@ -1,5 +1,6 @@
 module IRTS.Codegen.ReaderEmitter
   ( Emitter
+  , EmitterM
   , askPrelude
   , askFuns
   , askTagMap
