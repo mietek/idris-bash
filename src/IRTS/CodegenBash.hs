@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module IRTS.CodegenBash (codegenBash) where
 
 import Data.Char (isAlpha, isDigit)
@@ -27,7 +29,7 @@ emitProg = do
     p <- askPrelude
     fs <- askFuns
     emit p
-    emit ""
+    ""
     emitTags
     mapM_ emitFun fs
     emit $ showName (sMN 0 "runMain")
@@ -39,8 +41,8 @@ emitTags = do
     tc <- askTagCount
     mapM_ emitTag ts
     emit $ "_AP=" ++ show tc
-    emit ""
-    emit ""
+    ""
+    ""
 
 emitTag :: (Int, Int) -> Emitter
 emitTag (t, i) =
@@ -54,9 +56,9 @@ emitFun (n, f@(SFun _ _ _ e)) = do
       emitPushFrame
       emitExp e
       emitPopFrame
-    emit "}"
-    emit ""
-    emit ""
+    "}"
+    ""
+    ""
 
 emitPushFrame :: Emitter
 emitPushFrame = do
@@ -155,16 +157,16 @@ emitSwitch v cs = do
             else showParamVar v
     emit $ "case " ++ cv ++ " in"
     sequence_ $
-      intersperse (nest $ emit ";;") $
+      intersperse (nest ";;") $
         map (emitCase v') cs
-    emit "esac"
+    "esac"
   where
     isConCase (SConCase _ _ _ _ _) = True
     isConCase _                    = False
 
 emitCase :: String -> SAlt -> Emitter
 emitCase _ (SDefaultCase e) = do
-    emit "*)"
+    "*)"
     nest $
       emitExp e
 emitCase _ (SConstCase t e) = do

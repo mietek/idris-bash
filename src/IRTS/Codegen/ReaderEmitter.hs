@@ -1,3 +1,7 @@
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeSynonymInstances #-}
+
 module IRTS.Codegen.ReaderEmitter
   ( Emitter
   , EmitterM
@@ -21,6 +25,7 @@ module IRTS.Codegen.ReaderEmitter
 
 import Control.Monad.Reader (ReaderT, ask, lift, local, runReaderT)
 import qualified Data.IntMap.Strict as M
+import Data.String (IsString, fromString)
 import IRTS.CodegenCommon (CodegenInfo, simpleDecls)
 import qualified IRTS.Codegen.Emitter as E
 import IRTS.Codegen.Utils (TagMap, findTags, countLocs)
@@ -88,6 +93,10 @@ nest e = do
 
 skip :: Emitter
 skip = lift E.skip
+
+
+instance (a ~ ()) => IsString (EmitterM a) where
+  fromString s = emit s
 
 collect :: Emitter -> String
 collect e = E.collect (runEmitter ei e)
