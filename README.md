@@ -1,3 +1,10 @@
+-------------------------------------------------------------------------------
+
+This project is no longer maintained.
+
+-------------------------------------------------------------------------------
+
+
 _idris-bash_
 ============
 
@@ -27,4 +34,4 @@ Output: [`pythag.sh`](https://gist.github.com/mietek/7fbb604d186042f613d3)
 About
 -----
 
-Made by [Miëtek Bak](https://mietek.io/).  Published under the [MIT X11 license](LICENSE.md).
+Made by [Miëtek Bak](https://mietek.io/).  Published under the BSD license.
